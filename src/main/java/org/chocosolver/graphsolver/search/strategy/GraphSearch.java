@@ -1,0 +1,335 @@
+/*
+ * Copyright (c) 1999-2014, Ecole des Mines de Nantes
+ * All rights reserved.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the Ecole des Mines de Nantes nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE REGENTS AND CONTRIBUTORS BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/**
+ * Created by IntelliJ IDEA.
+ * User: Jean-Guillaume Fages
+ * Date: 08/08/12
+ * Time: 15:27
+ */
+
+package org.chocosolver.graphsolver.search.strategy;
+
+import org.chocosolver.graphsolver.GraphModel;
+import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropFusionAsymUndirectedGraphVar;
+import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropLagrOneTree;
+import org.chocosolver.graphsolver.search.GraphAssignment;
+import org.chocosolver.graphsolver.search.GraphDecision;
+import org.chocosolver.graphsolver.variables.GraphVar;
+import org.chocosolver.solver.search.strategy.Search;
+import org.chocosolver.solver.search.strategy.strategy.AbstractStrategy;
+import org.chocosolver.util.objects.setDataStructures.ISet;
+
+public class GraphSearch extends GraphStrategy {
+
+
+	//***********************************************************************************
+	// CONSTRUCTORS
+	//***********************************************************************************
+
+	// heuristics
+	public static final int LEX = 0;
+	public static final int MIN_P_DEGREE = 1;
+	public static final int MAX_P_DEGREE = 2;
+	public static final int MIN_M_DEGREE = 3;
+	public static final int MAX_M_DEGREE = 4;
+	public static final int MIN_DELTA_DEGREE = 5;
+	public static final int MAX_DELTA_DEGREE = 6;
+	public static final int MIN_COST = 7;
+	public static final int MAX_COST = 8;
+	public static final int REDUCED_COST_HK= 9;
+	public static final int REDUCED_COST_INTERLEAVE = 10;
+	public static final int REDUCED_COST_INTERLEAVE_MIN = 11;
+
+	// variables
+	private int n;
+	private int mode;
+	private int[][] costs;
+	private PropFusionAsymUndirectedGraphVar interleave;
+	private PropLagrOneTree hk;
+	private GraphAssignment decisionType;
+	private int from, to;
+	private int value;
+	private boolean useLC;
+	private boolean checkInterleaveSol = false;
+	private boolean checkHKSol = false;
+	private int lastFrom = -1;
+
+	/**
+	 * Search strategy for graphs
+	 *
+	 * @param graphVar varriable to branch on
+	 */
+	public GraphSearch(GraphVar graphVar) {
+		this(graphVar, null);
+	}
+
+	/**
+	 * Search strategy for graphs
+	 *
+	 * @param graphVar   varriable to branch on
+	 * @param costMatrix can be null
+	 */
+	public GraphSearch(GraphVar graphVar, int[][] costMatrix) {
+		super(graphVar, null, null, NodeArcPriority.ARCS);
+		costs = costMatrix;
+		n = g.getNbMaxNodes();
+	}
+
+
+	public GraphSearch(GraphVar graphVar, int[][] costMatrix, PropFusionAsymUndirectedGraphVar prop, PropLagrOneTree propHK) {
+		super(graphVar, null, null, NodeArcPriority.ARCS);
+		this.interleave = prop;
+		this.hk = propHK;
+		costs = costMatrix;
+		n = g.getNbMaxNodes();
+	}
+
+
+	public GraphSearch(GraphVar graphVar, int[][] costMatrix, PropLagrOneTree prop) {
+		super(graphVar, null, null, NodeArcPriority.ARCS);
+		this.hk = prop;
+		costs = costMatrix;
+		n = g.getNbMaxNodes();
+	}
+
+	/**
+	 * Configures the search
+	 *
+	 * @param policy way to select arcs
+	 */
+	public GraphSearch configure(int policy) {
+		return configure(policy, true);
+	}
+
+	public GraphSearch configure(boolean interleaveSol, boolean hkSol, int policy) {
+		this.checkInterleaveSol = interleaveSol;
+		this.checkHKSol = hkSol;
+		return configure(policy, true);
+	}
+
+	/**
+	 * Configures the search
+	 *
+	 * @param policy  way to select arcs
+	 * @param enforce true if a decision is an arc enforcing
+	 *                false if a decision is an arc removal
+	 */
+	public GraphSearch configure(int policy, boolean enforce) {
+		if (enforce) {
+			decisionType = GraphAssignment.graph_enforcer;
+		} else {
+			decisionType = GraphAssignment.graph_remover;
+		}
+		mode = policy;
+		return this;
+	}
+
+	public GraphSearch useLastConflict() {
+		useLC = true;
+		return this;
+	}
+
+	@Override
+	public GraphDecision getDecision() {
+		if (g.isInstantiated()) {
+			return null;
+		}
+		GraphDecision dec = pool.getE();
+		if (dec == null) {
+			dec = new GraphDecision(pool);
+		}
+		computeNextArc();
+		dec.setArc(g, from, to, decisionType);
+		lastFrom = from;
+		return dec;
+	}
+
+	boolean shouldCheckBoth = false;
+	private void computeNextArc() {
+		to = -1;
+		from = -1;
+
+		if (useLC && lastFrom != -1) {
+			evaluateNeighbors(lastFrom);
+			if (to != -1) {
+				return;
+			}
+		}
+		if(checkInterleaveSol && checkHKSol){
+			shouldCheckBoth = false;
+			for (int i = 0; i < n/2; i++) {
+				if(checkHKSol && this.hk != null && hk.mst != null
+						&& hk.mst.edgeExists(i,interleave.bestMatching[i]+n/2)){
+					shouldCheckBoth = true;
+				}
+			}
+		}
+
+		for (int i = 0; i < n; i++) {
+			if (evaluateNeighbors(i)) {
+				return;
+			}
+		}
+		if (to == -1 && checkInterleaveSol) {
+			System.out.println("no guided search candidate");
+			checkInterleaveSol = false;
+			for (int i = 0; i < n; i++) {
+				if (evaluateNeighbors(i)) {
+					checkInterleaveSol = true;
+					return;
+				}
+			}
+			checkInterleaveSol = true;
+		}
+		if (to == -1) {
+			throw new UnsupportedOperationException();
+		}
+	}
+	int yes = 0;
+	int no = 0;
+	private boolean evaluateNeighbors(int i) {
+		ISet set = g.getPotSuccOrNeighOf(i);
+		if (set.size() == g.getMandSuccOrNeighOf(i).size()) {
+			return false;
+		}
+		int[] values = set.toArray();
+		for (int j : values) {
+			if (!g.getMandSuccOrNeighOf(i).contains(j)) {
+				boolean eligibleInterleave = true;
+				boolean eligibleHK = true;
+
+				if(!shouldCheckBoth){
+					int a = 3;
+				}
+				if(checkHKSol && shouldCheckBoth && this.hk != null && hk.mst != null
+						&& !hk.mst.edgeExists(i,j) ){
+					eligibleHK = false;
+				}
+
+				if(checkInterleaveSol && this.interleave != null && interleave.bestMatching != null && !(i > n/2
+						&& interleave.bestMatching[i-n/2] == j)) {
+					eligibleInterleave = false;
+				}
+				else{
+					int a =3;
+				}
+				int v = -1;
+				switch (mode) {
+					case REDUCED_COST_HK:
+						//TODO
+						if(this.hk != null && hk.mst != null
+								&& hk.mst.edgeExists(i,j) ) {
+							from = i;
+							to = j;
+							yes++;
+							return true;
+						}
+						else{
+							//Min cost
+							no++;
+							//v = costs[i][j];
+						}
+						break;
+					case REDUCED_COST_INTERLEAVE:
+						if(i > n/2 && this.interleave != null && interleave.bestMatching != null
+								&& interleave.bestMatching[i-n/2] == j) {
+							from = i;
+							to = j;
+							yes++;
+							return true;
+						}
+						else{
+							//Min cost
+							no++;
+							//TODO check si ça marche ici
+							//v = costs[i][j];
+						}
+						break;
+					case LEX:
+						from = i;
+						to = j;
+					case MIN_P_DEGREE:
+					case REDUCED_COST_INTERLEAVE_MIN:
+					case MAX_P_DEGREE:
+						v = g.getPotSuccOrNeighOf(i).size()
+								+ g.getPotPredOrNeighOf(j).size();
+						break;
+					case MIN_M_DEGREE:
+					case MAX_M_DEGREE:
+						v = g.getMandSuccOrNeighOf(i).size()
+								+ g.getMandPredOrNeighOf(j).size();
+						break;
+					case MIN_DELTA_DEGREE:
+					case MAX_DELTA_DEGREE:
+						v = g.getPotSuccOrNeighOf(i).size()
+								+ g.getPotPredOrNeighOf(j).size()
+								- g.getMandSuccOrNeighOf(i).size()
+								- g.getMandPredOrNeighOf(j).size();
+						break;
+					case MIN_COST:
+					case MAX_COST:
+						v = costs[i][j];
+						break;
+					default:
+						throw new UnsupportedOperationException("mode " + mode + " does not exist");
+				}
+				if (eligibleInterleave && eligibleHK && select(v)) {
+					value = v;
+					from = i;
+					to = j;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private boolean select(double v) {
+		return (from == -1 || (v < value && isMinOrIn(mode)) || (v > value && !isMinOrIn(mode)));
+	}
+
+	private static boolean isMinOrIn(int policy) {
+		return (policy % 2 == 1);
+	}
+
+	public static AbstractStrategy defaultSearch(GraphModel model){
+		// overrides default search strategy to handle graph vars
+		AbstractStrategy other = Search.defaultSearch(model);
+		GraphVar[] gvs = model.retrieveGraphVars();
+		if (gvs.length == 0) {
+			return other;
+		} else {
+			AbstractStrategy[] gss = new AbstractStrategy[gvs.length + 1];
+			for (int i = 0; i < gvs.length; i++) {
+				gss[i] = new GraphStrategy(gvs[i]);
+			}
+			gss[gvs.length] = other;
+			return Search.sequencer(gss);
+		}
+	}
+}
