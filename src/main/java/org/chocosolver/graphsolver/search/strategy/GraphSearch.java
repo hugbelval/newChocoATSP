@@ -184,7 +184,7 @@ public class GraphSearch extends GraphStrategy {
 			shouldCheckBoth = false;
 			for (int i = 0; i < n/2; i++) {
 				if(checkHKSol && this.hk != null && hk.mst != null
-						&& hk.mst.edgeExists(i,interleave.bestMatching[i]+n/2)){
+						&& hk.mst.edgeExists(i,interleave.bestMatchingState.quickGet(i)+n/2)){
 					shouldCheckBoth = true;
 				}
 			}
@@ -226,13 +226,13 @@ public class GraphSearch extends GraphStrategy {
 				if(!shouldCheckBoth){
 					int a = 3;
 				}
-				if(checkHKSol && shouldCheckBoth && this.hk != null && hk.mst != null
+				if(checkHKSol && this.hk != null && hk.mst != null
 						&& !hk.mst.edgeExists(i,j) ){
 					eligibleHK = false;
 				}
 
-				if(checkInterleaveSol && this.interleave != null && interleave.bestMatching != null && !(i > n/2
-						&& interleave.bestMatching[i-n/2] == j)) {
+				if(checkInterleaveSol && this.interleave != null && interleave.bestMatchingState != null && !(i > n/2
+						&& interleave.bestMatchingState.quickGet(i-n/2) == j)) {
 					eligibleInterleave = false;
 				}
 				else{
@@ -252,21 +252,6 @@ public class GraphSearch extends GraphStrategy {
 						else{
 							//Min cost
 							no++;
-							//v = costs[i][j];
-						}
-						break;
-					case REDUCED_COST_INTERLEAVE:
-						if(i > n/2 && this.interleave != null && interleave.bestMatching != null
-								&& interleave.bestMatching[i-n/2] == j) {
-							from = i;
-							to = j;
-							yes++;
-							return true;
-						}
-						else{
-							//Min cost
-							no++;
-							//TODO check si ça marche ici
 							//v = costs[i][j];
 						}
 						break;

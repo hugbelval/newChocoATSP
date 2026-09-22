@@ -183,7 +183,8 @@ public class HungarianAlgorithm {
         greedyMatch();
 
         int w = fetchUnmatchedWorker();
-        while (w >= 0 && lowerBound == 0) {
+        double baseLb = lowerBound;
+        while (w >= 0 && lowerBound == baseLb) {
             initializePhase(w);
             executePhase();
             w = fetchUnmatchedWorker();

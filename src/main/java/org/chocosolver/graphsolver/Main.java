@@ -30,6 +30,7 @@ package org.chocosolver.graphsolver;
 import org.chocosolver.graphsolver.GraphModel;
 //import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropFusionASym;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.PropCycleCostSimple;
+import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.ABMode;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropFusionAsymUndirectedGraphVar;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropLagrOneTree;
 //import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropSymVarFusionASym;
@@ -91,13 +92,13 @@ public class Main {
         //resultsFirstLB_vsSequencing();
 
         //resultsMyMethod();true
-        resultsTimeAndNodes_vsHeldKarp();
+        //resultsTimeAndNodes_vsHeldKarp();
 
-        //randomLoop();
+        randomLoop();
         //resultsFirstLB();
         //resultsTimeAndNodes();
         //getData();
-        String fileName = "crane66_1.atsp";
+        String fileName = "coin100_1.atsp";
         currentGraphSearch = GraphSearch.MAX_COST;
         int[][] data = getATSPInstance(fileName);
         n = data.length;
@@ -105,7 +106,7 @@ public class Main {
         int presolve = (int)getBestSol(fileName);
 
         System.out.println("First");
-        fusionAsymUndirected(jonker_matrix, presolve, false, false);
+        fusionAsymUndirected(jonker_matrix, presolve, ABMode.Interleave, true);
     }
 
     public static double getBestSol(String filename) {
@@ -179,15 +180,15 @@ public class Main {
             currentGraphSearch = GraphSearch.MAX_COST;
             Solver resultsBench = heldKarp(jonker_matrix,presolve);
             benchTime[i] = resultsBench.getTimeCount();
-            Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, false, false);
+            Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, ABMode.JustHung, false);
             sequencingTime[i] = resultsSequencing.getTimeCount();
-            Solver resultsFusion = fusionAsymUndirected(jonker_matrix, presolve, true, false);
+            Solver resultsFusion = fusionAsymUndirected(jonker_matrix, presolve, ABMode.Interleave, false);
             fusionTime[i] = resultsFusion.getTimeCount();
 
-			Solver resultsSequencing2 = fusionAsymUndirected(jonker_matrix, presolve, false, true);
+			Solver resultsSequencing2 = fusionAsymUndirected(jonker_matrix, presolve, ABMode.JustHung, true);
 			sequencingTime2[i] = resultsSequencing2.getTimeCount();
 
-			Solver resultsFusion2 = fusionAsymUndirected(jonker_matrix, presolve, true, true);
+			Solver resultsFusion2 = fusionAsymUndirected(jonker_matrix, presolve, ABMode.Interleave, true);
 			fusionTime2[i] = resultsFusion2.getTimeCount();
 
             fusionNodeCount[i] = resultsFusion.getNodeCount();
@@ -301,17 +302,24 @@ public class Main {
         while (true){
             int[][] data = randomMatrix();
             int[][] jonker_matrix = makeJonkerMatrix(data);
-            int presolve = 500000;
-            Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, true, false);
+            Solver result0 = heldKarp(jonker_matrix,999999);
+            double firstLb0 = hk.firstLb;
+            Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, ABMode.Sequence, false);
+            double firstLb1 = interleaveProp.firstLb;
             //System.out.println("result " + graph.toString());
-            //Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, false, false);
+            Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, ABMode.Interleave, false);
+            double firstLb2 = interleaveProp.firstLb;
             //System.out.println("result " + graph.toString());
-			/*if(result1.getNodeCount() < result2.getNodeCount()){
-				int a = 3;
-			}*/
-            /*if(result1.getBestSolutionValue().intValue() != result2.getBestSolutionValue().intValue()){
+            if(firstLb1 != firstLb2){
+                int a =3;
+            }
+            if(firstLb0 < firstLb1 && firstLb1 < firstLb2){
                 int a = 3;
-            }*/
+            }
+
+            if(firstLb1>firstLb2){
+                int a =3;
+            }
         }
     }
 
@@ -344,7 +352,7 @@ public class Main {
                 if (i == j) {
                     matrix[i][i] = 99999;
                 } else {
-                    matrix[i][j] = rand.nextInt(20);
+                    matrix[i][j] = rand.nextInt(10);
                 }
 
         return matrix;
@@ -357,8 +365,8 @@ public class Main {
         return getDataFromProblem(problem);
     }
 
-    private static String FOLDER = "atsp/";
-    //private static String FOLDER = "easy_atsp/";
+    //private static String FOLDER = "atsp/";
+    private static String FOLDER = "easy_atsp/";
     //private static String FOLDER = "decent_atsp/";
     private static int[][] getATSPInstance(String name) throws IOException {
         org.moeaframework.problem.tsplib.TSPInstance problem = new TSPInstance(new File(FOLDER + "/" + name));
@@ -435,7 +443,7 @@ public class Main {
         else{
             heuristic = new GraphSearch(graph, costMatrix, interleaveProp, hk);
         }
-        solver.setSearch(heuristic.configure(selectedInterleave, false, graphSearch).useLastConflict());
+        solver.setSearch(heuristic.configure(false, true, graphSearch).useLastConflict());
         solver.limitTime(LIMIT+"s");
         //solver.showDecisions();
         model.setObjective(Model.MINIMIZE,totalCost);
@@ -478,7 +486,6 @@ public class Main {
                 System.out.println("no solution found");
             }
         }
-
 
         return solver;
         //return solver.getBestSolutionValue().intValue() + M*n;
@@ -536,9 +543,9 @@ public class Main {
         return search(costMatrix, true, GraphSearch.MAX_COST, false);
     }
 
-    private static Solver fusionAsymUndirected(int[][] costMatrix, int initialUB, boolean interleave, boolean guidedSearch){
+    private static Solver fusionAsymUndirected(int[][] costMatrix, int initialUB, ABMode mode, boolean guidedSearch){
         createModel(costMatrix, - (n)*M+initialUB);
-        interleaveProp = new PropFusionAsymUndirectedGraphVar(graph, totalCost, costMatrix, interleave);
+        interleaveProp = new PropFusionAsymUndirectedGraphVar(graph, totalCost, costMatrix, mode);
         hk = new PropLagrOneTree(graph, totalCost, costMatrix);
         Propagator[] props = new Propagator[]{
                 interleaveProp,

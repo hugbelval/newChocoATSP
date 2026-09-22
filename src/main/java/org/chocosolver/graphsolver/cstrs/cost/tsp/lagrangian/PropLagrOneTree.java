@@ -66,6 +66,7 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 	private final double[] penalities;
 	private double totalPenalities;
 	public UndirectedGraph mst;
+	public double firstLb = -1;
 	private double step;
 	private final AbstractTreeFinder HKfilter, HK;
 	private int nbSprints;
@@ -110,6 +111,9 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 			lb = obj.getLB();
 			lagrangianRelaxation();
 		} while (lb < obj.getLB());
+		if (firstLb == -1){
+			firstLb = lb;
+		}
 	}
 
 	private void lagrangianRelaxation() throws ContradictionException {

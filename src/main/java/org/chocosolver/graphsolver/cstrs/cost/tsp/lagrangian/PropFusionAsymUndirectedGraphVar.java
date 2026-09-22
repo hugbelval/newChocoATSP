@@ -45,15 +45,11 @@ import org.chocosolver.util.procedure.PairProcedure;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 /**
  * TSP Lagrangian relaxation
@@ -94,6 +90,8 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	protected int nbSprints;
 	private static int bigValue = 2000000000;
 	public double firstLb = Double.NEGATIVE_INFINITY;
+	public double[][] firstRc;
+	public IStateIntVector bestMatchingState;
 	public int[] bestMatching;
 	//private HashSet<Integer> remainingRows;
 	//private HashSet<Integer> remainingCols;
@@ -462,10 +460,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			throw new RuntimeException("Error352");
 		}
 
-		for (int i = remainingRows.nextClearBit(0); i < n; i = remainingRows.nextClearBit(i + 1)){
-			//Met les zéros des arcs obligatoires
-			matching[i] = arcsEnforcedFromState.quickGet(i);
-		}
 		//Force 1-tree, maybe not necessary
 			/*	new int[n - 1][n - 1];
 		for (int i = 1; i < n; i++)
@@ -712,6 +706,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		}
 
 		arcsEnforcedFromState = model.getEnvironment().makeIntVector(n, -1);
+		bestMatchingState = model.getEnvironment().makeIntVector(n, -1);
 		lowerBoundState = model.getEnvironment().makeFloat(0);
 
 		costs = new double[n][n];
@@ -719,15 +714,15 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		this.onArcRemoved = this::arcRemovedPropagation;
 		this.onArcEnforced = this::arcEnforcedPropagation;
 	}
-	boolean interleave;
+	ABMode abMode;
 
-	public PropFusionAsymUndirectedGraphVar(UndirectedGraphVar graph, IntVar cost, int[][] costMatrix, boolean interleave) {
+	public PropFusionAsymUndirectedGraphVar(UndirectedGraphVar graph, IntVar cost, int[][] costMatrix, ABMode mode) {
 		this(new Variable[]{graph, cost}, costMatrix);
 		g = graph.getUB();
 		gV = graph;
 		costVar = cost;
 		this.deltaMonitor = gV.monitorDelta(this);
-		this.interleave = interleave;
+		this.abMode = mode;
 	}
 
 	private void undoEdmondsPenality(int from, int to){
@@ -1058,7 +1053,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		}
 		justHungFW();
 
-		if(interleave){
+		if(abMode == ABMode.Interleave){
 			fusionRelaxationAsym();
 		}
 		int a =3;
@@ -1093,7 +1088,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		reducedCosts = Arrays.stream(costs).map(double[]::clone).toArray(double[][]::new);
 		lowerBound = M*n;
 		justHungFW();
-		if(interleave){
+		if(abMode == ABMode.Interleave || abMode == ABMode.Sequence){
 			fusionRelaxationAsym();
 		}
 		if(getData){
@@ -1202,6 +1197,17 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		return cycles.size();
 	}
 
+	private void setBestMatching(int[] matching) {
+		for (int i = 0; i < n; i++) {
+			int val = (arcsEnforcedFromState.quickGet(i) != -1)
+					? arcsEnforcedFromState.quickGet(i)
+					: matching[i];
+			if (bestMatchingState.quickGet(i) != val) {
+				bestMatchingState.set(i, val);
+			}
+		}
+	}
+
 	double lbBegin = 0;
 
 	protected void justHungFW() throws ContradictionException{
@@ -1258,12 +1264,12 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		reducedCosts = result.array;
 
 		if (result.matching!= null){
-			bestMatching = result.matching;
+			setBestMatching(result.matching);
 		}
 
 		logState();
 
-		if(interleave){
+		if(abMode == ABMode.Interleave){
 			//undoAllCycles();
 		}
 
@@ -1287,7 +1293,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	}
 
 	protected void fusionRelaxationAsym() throws ContradictionException {
-
 		if(iter > 1) {
 			//return;
 		}
@@ -1298,13 +1303,13 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		int maxNonImprove = 1;
 		nbSprints = n;
 		int nonImprove = 0;
-		int i = 0;
+		int iters = 0;
 		lbBegin = lowerBound;
 		boolean shouldContinue = true;
 		int hungIters = 0;
 
 		//undoAllCycles();
-		while (shouldContinue && i < nbSprints && nonImprove < maxNonImprove){
+		while (shouldContinue && iters < nbSprints && nonImprove < maxNonImprove){
 			if(false/*interleave*/) {
 				result = hungarianIteration(reducedCosts);
 				lowerBound += result.lb;
@@ -1328,7 +1333,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			if (lowerBound > maxLb /*+ bonusPen*/) {
 				maxLb = lowerBound;
 				if (result.matching!= null){
-					bestMatching = result.matching;
+					setBestMatching(result.matching);
 				}
 				nonImprove = 0;
 			}
@@ -1341,9 +1346,14 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				//filterFloydWarshallNew(lowerBound, result.matching);
 			}
 
-			if(interleave){
+			if(abMode == ABMode.Interleave){
 				try{
-					result = edmondsIteration(reducedCosts, false, result.matching);
+					int[] matching = result.matching;
+					for (int i = remainingRows.nextClearBit(0); i < n; i = remainingRows.nextClearBit(i + 1)){
+						//Met les zéros des arcs obligatoires
+						matching[i] = arcsEnforcedFromState.quickGet(i);
+					}
+					result = edmondsIteration(reducedCosts, false, matching);
 				}
 				catch (ContradictionException e){
 					System.out.println("edmondsThrow");
@@ -1356,16 +1366,22 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				/*if(result.lb == 0){
 					shouldContinue = false;
 				}*/
-			} else {
-				/*while(result.lb > 0) {
-					//TODO doesnt work for now, should ignoreStars
+			} else if (abMode == ABMode.Sequence){
+				int[] matching = result.matching;
+				for (int i = remainingRows.nextClearBit(0); i < n; i = remainingRows.nextClearBit(i + 1)){
+					//Met les zéros des arcs obligatoires
+					matching[i] = arcsEnforcedFromState.quickGet(i);
+				}
+				while(result.lb > 0) {
 					result = edmondsIteration(reducedCosts, false, result.matching);
 					lowerBound += result.lb;
 					basicFiltering(reducedCosts, lowerBound);
 					if(result.lb > 0){
 						int a =3;
 					}
-				}*/
+				}
+			} else{
+				throw new RuntimeException("mode not implemented");
 			}
 
 			//System.out.println("lb before floor : " + lowerBound);
@@ -1380,11 +1396,11 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				costVar.updateLowerBound((int) Math.ceil(maxLb), this);
 			}
 			catch(ContradictionException e) {
-				//System.out.println("at iter " + iter + " pruned node due to AP+1arbo bound " + (maxLb - M*n));
+				System.out.println("at iter " + iter + " pruned node due to AP+1arbo bound " + (maxLb - M*n));
+				throw e;
 			}
-			i++;
+			iters++;
 		}
-        //System.out.println(i);
 
 		if(costVar.getUB() - maxLb < maxLb/2){
 			//filterBigReducedCosts(maxLb, bestReducedCosts);
@@ -1411,9 +1427,10 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		}
 
 		//System.out.println("lb after AP + 1-arbo : " + (maxLb - M*n));
+		*/
 		if(removed > 0) {
 			//System.out.println("at iter " + iter + "removed by AP + 1-arbo : " + removed);
-		}*/
+		}
 		removed = 0;
 		boundDecreased = 0;
 		//count = 0;
