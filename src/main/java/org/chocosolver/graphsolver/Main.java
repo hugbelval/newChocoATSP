@@ -83,7 +83,7 @@ public class Main {
     private static IntVar totalCost;
     private static UndirectedGraphVar graph;
     private static DirectedGraphVar digraph;
-    private static int LIMIT = 2000; // in seconds
+    private static int LIMIT = 1; // in seconds
     private static int n;
     private static int M = 1000000;
     private static int bigValue = 999999999;
@@ -94,11 +94,11 @@ public class Main {
         //resultsMyMethod();true
         //resultsTimeAndNodes_vsHeldKarp();
 
-        randomLoop();
+        //randomLoop();
         //resultsFirstLB();
         //resultsTimeAndNodes();
         //getData();
-        String fileName = "coin100_1.atsp";
+        String fileName = "kro124p.atsp";
         currentGraphSearch = GraphSearch.MAX_COST;
         int[][] data = getATSPInstance(fileName);
         n = data.length;
@@ -106,7 +106,11 @@ public class Main {
         int presolve = (int)getBestSol(fileName);
 
         System.out.println("First");
+        fusionAsymUndirected(jonker_matrix, presolve, ABMode.Sequence, true);
+        double[][] redSeqCost = interleaveProp.bestReducedCosts;
         fusionAsymUndirected(jonker_matrix, presolve, ABMode.Interleave, true);
+        double[][] redInterleaveCost = interleaveProp.bestReducedCosts;
+        int a =3;
     }
 
     public static double getBestSol(String filename) {
@@ -182,21 +186,22 @@ public class Main {
             benchTime[i] = resultsBench.getTimeCount();
             Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, ABMode.JustHung, false);
             sequencingTime[i] = resultsSequencing.getTimeCount();
+            fusionAsymUndirected(jonker_matrix, presolve, ABMode.Sequence, false);
             Solver resultsFusion = fusionAsymUndirected(jonker_matrix, presolve, ABMode.Interleave, false);
             fusionTime[i] = resultsFusion.getTimeCount();
 
-			Solver resultsSequencing2 = fusionAsymUndirected(jonker_matrix, presolve, ABMode.JustHung, true);
+			/*Solver resultsSequencing2 = fusionAsymUndirected(jonker_matrix, presolve, ABMode.JustHung, true);
 			sequencingTime2[i] = resultsSequencing2.getTimeCount();
 
 			Solver resultsFusion2 = fusionAsymUndirected(jonker_matrix, presolve, ABMode.Interleave, true);
-			fusionTime2[i] = resultsFusion2.getTimeCount();
+			fusionTime2[i] = resultsFusion2.getTimeCount();*/
 
             fusionNodeCount[i] = resultsFusion.getNodeCount();
             benchNodeCount[i] = resultsBench.getNodeCount();
             sequencingNodeCount[i] = resultsSequencing.getNodeCount();
 
-            sequencingNodeCount2[i] = resultsSequencing2.getNodeCount();
-            fusionNodeCount2[i] = resultsFusion2.getNodeCount();
+            /*sequencingNodeCount2[i] = resultsSequencing2.getNodeCount();
+            fusionNodeCount2[i] = resultsFusion2.getNodeCount();*/
         }
 
         try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/HK+Me_vsJustHungNO_aPROPMCOST.csv"))) {
@@ -298,7 +303,7 @@ public class Main {
     }*/
 
     private static void randomLoop(){
-        n = 4;
+        n = 44;
         while (true){
             int[][] data = randomMatrix();
             int[][] jonker_matrix = makeJonkerMatrix(data);
@@ -306,15 +311,21 @@ public class Main {
             double firstLb0 = hk.firstLb;
             Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, ABMode.Sequence, false);
             double firstLb1 = interleaveProp.firstLb;
+            double[][] bestRc1 = interleaveProp.bestReducedCosts;
             //System.out.println("result " + graph.toString());
             Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, ABMode.Interleave, false);
             double firstLb2 = interleaveProp.firstLb;
+            double[][] bestRc2 = interleaveProp.bestReducedCosts;
             //System.out.println("result " + graph.toString());
             if(firstLb1 != firstLb2){
                 int a =3;
             }
             if(firstLb0 < firstLb1 && firstLb1 < firstLb2){
                 int a = 3;
+            }
+
+           if(firstLb2 > firstLb1){
+                int a =3;
             }
 
             if(firstLb1>firstLb2){
@@ -341,7 +352,7 @@ public class Main {
         return bench;
     }
 
-    private static int seed = 7546;
+    private static int seed = 7562;
     public static int[][] randomMatrix() {
         Random rand = new Random(seed);
         seed++;
@@ -352,7 +363,7 @@ public class Main {
                 if (i == j) {
                     matrix[i][i] = 99999;
                 } else {
-                    matrix[i][j] = rand.nextInt(10);
+                    matrix[i][j] = rand.nextInt(40);
                 }
 
         return matrix;
