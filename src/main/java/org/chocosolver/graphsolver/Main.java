@@ -97,7 +97,7 @@ public class Main {
         //resultsFirstLB();
         //resultsTimeAndNodes();
         //getData();
-        String fileName = "crane66_1.atsp";
+        String fileName = "coin100_1.atsp";
         currentGraphSearch = GraphSearch.MAX_COST;
         int[][] data = getATSPInstance(fileName);
         n = data.length;
@@ -105,7 +105,7 @@ public class Main {
         int presolve = (int)getBestSol(fileName);
 
         System.out.println("First");
-        fusionAsymUndirected(jonker_matrix, presolve, false, false);
+        fusionAsymUndirected(jonker_matrix, presolve, true, false);
     }
 
     public static double getBestSol(String filename) {
@@ -299,6 +299,7 @@ public class Main {
     private static void randomLoop(){
         n = 4;
         while (true){
+            System.out.println(seed);
             int[][] data = randomMatrix();
             int[][] jonker_matrix = makeJonkerMatrix(data);
             int presolve = 500000;
@@ -333,7 +334,7 @@ public class Main {
         return bench;
     }
 
-    private static int seed = 7546;
+    private static int seed = 8019;
     public static int[][] randomMatrix() {
         Random rand = new Random(seed);
         seed++;
@@ -357,9 +358,9 @@ public class Main {
         return getDataFromProblem(problem);
     }
 
-    private static String FOLDER = "atsp/";
+    //private static String FOLDER = "atsp/";
     //private static String FOLDER = "easy_atsp/";
-    //private static String FOLDER = "decent_atsp/";
+    private static String FOLDER = "decent_atsp/";
     private static int[][] getATSPInstance(String name) throws IOException {
         org.moeaframework.problem.tsplib.TSPInstance problem = new TSPInstance(new File(FOLDER + "/" + name));
         return getDataFromProblem(problem);
