@@ -105,7 +105,7 @@ public class Main {
         int presolve = (int)getBestSol(fileName);
 
         System.out.println("First");
-        fusionAsymUndirected(jonker_matrix, presolve, true, false);
+        fusionAsymUndirected(jonker_matrix, presolve, false, false);
     }
 
     public static double getBestSol(String filename) {
@@ -198,7 +198,7 @@ public class Main {
             fusionNodeCount2[i] = resultsFusion2.getNodeCount();
         }
 
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/HK+Me_vsJustHungNO_aPROPMCOST.csv"))) {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/HKNEW.csv"))) {
             bw.write("," + String.join(",", filenames)); bw.newLine();
             bw.write("Held-Karp - temps," + Arrays.stream(benchTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
