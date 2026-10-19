@@ -96,9 +96,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	//***********************************************************************************
 
 	public Result hungarianSSP(double[][] costs){
-		if(iter == 5){
-			int a =3;
-		}
 		Result result = hung.execute(costs, remainingRows, remainingCols);
 		return result;
 	}
@@ -232,7 +229,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				List<Integer> cycle = dfsFindCycle(matching, i, visited,
 						new HashMap<>(), new HashSet<>());
 				int k = 5;
-				if (cycle != null && cycle.size() < n && cycle.size() == 2 /*&& (cycle.size() < nRemaining/k || cycle.size() > nRemaining-nRemaining/k)*/ ) {
+				if (cycle != null && cycle.size() < n && cycle.size() <= tailleMaxCycles /*&& (cycle.size() < nRemaining/k || cycle.size() > nRemaining-nRemaining/k)*/ ) {
 					cycles.add(cycle);
 				}
 			}
@@ -274,11 +271,12 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				penalizeCols = false;
 			}
 
-			if(minimumInRow > bigValue*0.9 && minimumInCol > bigValue*0.9) {
+			if(minimumInRow > bigValue*0.9 || minimumInCol > bigValue*0.9) {
 				System.out.println("found inconsistency in edmonds ");
 				this.fails();
 			}
 
+			//System.out.println("penalized " + cycle + "amount " + minimum);
 			penalizeCycle(cycleBs, matrix, minimum, penalizeCols);
 			lb += minimum;
 		}
@@ -287,8 +285,100 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	}
 
 
+	public Result fullEdmondsSCC(
+			double[][] matrix,
+			boolean ignoreStars,
+			int[] matching
+	) throws ContradictionException {
+		count++;
+
+		int root = 0;
+
+		int n = matrix.length;
+		double lb = 0;
+		if(!ignoreStars){
+		} else {
+			throw new RuntimeException("Error352");
+		}
+
+
+		for (int i = remainingRows.nextClearBit(0); i < n; i = remainingRows.nextClearBit(i + 1)){
+			matching[i] = arcsEnforcedFromState.quickGet(i);
+		}
+
+		List<Integer>[] A = new List[n];
+		for (int i =0; i<n; i++){
+			A[i] = new ArrayList<>();
+			int j = matching[i];
+			if (j != root){
+				A[i].add(j);
+			}
+		}
+
+		boolean shouldStop = false;
+
+		while (!shouldStop){
+			ArrayList<ArrayList<Integer>> strongComponents;
+
+			strongComponents = SCCFinder.getSCCs(A);
+
+			boolean componentFound = false;
+
+			for(List<Integer> scc : strongComponents){
+				boolean validSCC = true;
+				BitSet sccBs = createBitsetFromList(scc);
+				double minimumInCol = bigValue;
+				int minimumi = -1;
+				int minimumj = -1;
+
+				for (int i = 0; i < n; i++) {
+					if (sccBs.get(i)) continue;
+					for (int j : A[i]) {
+						if (sccBs.get(j)) {
+							validSCC = false;
+						}
+					}
+				}
+
+				if(validSCC && !sccBs.get(root)){
+					for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
+						if(!sccBs.get(i)){
+							for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
+								if (sccBs.get(j)){
+									if(matrix[i][j] < minimumInCol){
+										minimumInCol = matrix[i][j];
+										minimumi = i;
+										minimumj = j;
+									}
+								}
+							}
+						}
+					}
+				}
+
+				double minimum = minimumInCol; //Math.max(minimumInRow, minimumInCol);
+				if(!sccBs.get(root) && validSCC){
+					if (minimum > bigValue*0.9){
+						System.out.println("found inconsistency in edmonds ");
+						this.fails();
+					}
+
+					A[minimumi].add(minimumj);
+					componentFound = true;
+
+					penalizeCycle(sccBs, matrix, minimum, true);
+					lb += minimum;
+				}
+			}
+			if(!componentFound){
+				shouldStop = true;
+			}
+		}
+		return new Result(lb, matrix, null);
+	}
+
 	private void penalizeCycle(BitSet cycle, double[][] matrix, double k, boolean penalizeCols){
-		if(penalizeCols){
+		if(!penalizeCols){
 			for (int i = cycle.nextSetBit(0); i >= 0; i = cycle.nextSetBit(i + 1)){
 				for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
 					if(remainingRows.get(i) && !cycle.get(j))
@@ -355,13 +445,21 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	}
 	boolean interleave;
 
+	int tailleMaxCycles;
+
 	public PropFusionAsymUndirectedGraphVar(UndirectedGraphVar graph, IntVar cost, int[][] costMatrix, boolean interleave) {
 		this(new Variable[]{graph, cost}, costMatrix);
 		g = graph.getUB();
 		gV = graph;
 		costVar = cost;
 		this.deltaMonitor = gV.monitorDelta(this);
-		this.interleave = interleave;
+		if(interleave){
+			tailleMaxCycles = 2;
+		}else{
+			tailleMaxCycles=n;
+		}
+		this.interleave = true;
+
 	}
 
 
@@ -622,42 +720,43 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 
 		logState();
 
+		matching = result.matching;
 		if((removed > 0)){
-			filterFloydWarshallNew(lowerBound, result.matching);
+			filterFloydWarshallNew(lowerBound, matching);
 		}
 
 		removed = 0;
 		iter++;
 	}
 
+	int[] matching;
+
 	protected void fusionRelaxationAsym() throws ContradictionException {
 		double maxLb = Double.NEGATIVE_INFINITY;
 		Result result;
-		int maxNonImprove = 1;
 		nbSprints = n;
-		int nonImprove = 0;
 		int i = 0;
 		lbBegin = lowerBound;
-		boolean shouldContinue = true;
+		removed = 0;
 
 		result = hungarianSSP(reducedCosts);
 		lowerBound += result.lb;
 		reducedCosts = result.array;
 
 		basicFiltering(reducedCosts, lowerBound);
-		if (lowerBound > maxLb /*+ bonusPen*/) {
+		if (lowerBound > maxLb) {
 			maxLb = lowerBound;
 			if (result.matching!= null){
 				bestMatching = result.matching;
 			}
-			nonImprove = 0;
-		}
-		else {
-			nonImprove++;
 		}
 
 		try{
-			result = edmonds2cycles(reducedCosts, false, result.matching);
+			if(tailleMaxCycles > 2){
+				result = fullEdmondsSCC(reducedCosts, false, result.matching);
+			} else{
+				result = edmonds2cycles(reducedCosts, false, result.matching);
+			}
 		}
 		catch (ContradictionException e){
 			System.out.println("edmondsThrow");
@@ -668,9 +767,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 
 		if (lowerBound > maxLb) {
 			maxLb = lowerBound;
-			if (result.matching!= null){
-				//bestMatching = result.matching;
-			}
 		}
 
 		//System.out.println("lb before floor : " + lowerBound);
@@ -679,6 +775,11 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		}
 
 		basicFiltering(reducedCosts, lowerBound);
+		//if(removed > 0)
+		//System.out.println("removed " + removed + " at iter " + iter);
+		/*if((removed > 0)){
+			filterFloydWarshallNew(lowerBound, matching);
+		}*/
 
 		costVar.updateLowerBound((int) Math.ceil(maxLb), this);
 

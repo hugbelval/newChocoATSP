@@ -105,7 +105,8 @@ public class Main {
         int presolve = (int)getBestSol(fileName);
 
         System.out.println("First");
-        fusionAsymUndirected(jonker_matrix, presolve, false, false);
+        fusionAsymUndirected(jonker_matrix, presolve, false, true);
+        fusionAsymUndirected(jonker_matrix, presolve, true, true);
     }
 
     public static double getBestSol(String filename) {
@@ -177,8 +178,8 @@ public class Main {
             //	int presolve = TSP_Utils.getOptimum(INSTANCE,REPO+"/bestSols.csv");
             int presolve = (int)getBestSol(filenames[i]); //9999999;
             currentGraphSearch = GraphSearch.MAX_COST;
-            Solver resultsBench = heldKarp(jonker_matrix,presolve);
-            benchTime[i] = resultsBench.getTimeCount();
+            /*Solver resultsBench = heldKarp(jonker_matrix,presolve);
+            benchTime[i] = resultsBench.getTimeCount();*/
             Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, false, false);
             sequencingTime[i] = resultsSequencing.getTimeCount();
             Solver resultsFusion = fusionAsymUndirected(jonker_matrix, presolve, true, false);
@@ -191,25 +192,25 @@ public class Main {
 			fusionTime2[i] = resultsFusion2.getTimeCount();
 
             fusionNodeCount[i] = resultsFusion.getNodeCount();
-            benchNodeCount[i] = resultsBench.getNodeCount();
+            //benchNodeCount[i] = resultsBench.getNodeCount();
             sequencingNodeCount[i] = resultsSequencing.getNodeCount();
 
             sequencingNodeCount2[i] = resultsSequencing2.getNodeCount();
             fusionNodeCount2[i] = resultsFusion2.getNodeCount();
         }
 
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/HKNEW.csv"))) {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/HKNEW_vsSCC.csv"))) {
             bw.write("," + String.join(",", filenames)); bw.newLine();
             bw.write("Held-Karp - temps," + Arrays.stream(benchTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+Sequencer - temps," + Arrays.stream(sequencingTime)
+            bw.write("Held-Karp+SequencerTOUSCYCLES - temps," + Arrays.stream(sequencingTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+Entrelacer - temps," + Arrays.stream(fusionTime)
+            bw.write("Held-Karp+Entrelacer2CYCLE - temps," + Arrays.stream(fusionTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
 
-            bw.write("Held-Karp+SequencerGUIDE - temps," + Arrays.stream(sequencingTime2)
+            bw.write("Held-Karp+SequencerTOUSCYCLESGUIDE - temps," + Arrays.stream(sequencingTime2)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+EntrelacerGUIDE - temps," + Arrays.stream(fusionTime2)
+            bw.write("Held-Karp+Entrelacer2CYCLESGUIDE - temps," + Arrays.stream(fusionTime2)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
 
             bw.write("Held-Karp - noeuds," + Arrays.stream(benchNodeCount)
@@ -358,9 +359,9 @@ public class Main {
         return getDataFromProblem(problem);
     }
 
-    //private static String FOLDER = "atsp/";
+    private static String FOLDER = "atsp/";
     //private static String FOLDER = "easy_atsp/";
-    private static String FOLDER = "decent_atsp/";
+    //private static String FOLDER = "decent_atsp/";
     private static int[][] getATSPInstance(String name) throws IOException {
         org.moeaframework.problem.tsplib.TSPInstance problem = new TSPInstance(new File(FOLDER + "/" + name));
         return getDataFromProblem(problem);
