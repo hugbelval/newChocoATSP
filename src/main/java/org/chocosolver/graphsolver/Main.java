@@ -30,6 +30,8 @@ package org.chocosolver.graphsolver;
 import org.chocosolver.graphsolver.GraphModel;
 //import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropFusionASym;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.PropCycleCostSimple;
+import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.ABmode;
+import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.EdmondsArbo;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropFusionAsymUndirectedGraphVar;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropLagrOneTree;
 //import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropSymVarFusionASym;
@@ -40,6 +42,7 @@ import org.chocosolver.solver.Model;
 import org.chocosolver.solver.Solver;
 import org.chocosolver.solver.constraints.Constraint;
 import org.chocosolver.solver.constraints.Propagator;
+import org.chocosolver.solver.exception.ContradictionException;
 import org.chocosolver.solver.variables.IntVar;
 import org.chocosolver.util.objects.graphs.DirectedGraph;
 import org.chocosolver.util.objects.graphs.UndirectedGraph;
@@ -53,8 +56,10 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
 
@@ -82,7 +87,7 @@ public class Main {
     private static IntVar totalCost;
     private static UndirectedGraphVar graph;
     private static DirectedGraphVar digraph;
-    private static int LIMIT = 2000; // in seconds
+    private static int LIMIT = 1500; // in seconds
     private static int n;
     private static int M = 1000000;
     private static int bigValue = 999999999;
@@ -91,26 +96,28 @@ public class Main {
         //resultsFirstLB_vsSequencing();
 
         //resultsMyMethod();true
-        resultsTimeAndNodes_vsHeldKarp();
+        resultsTimeAndNodes_vsHeldKarp("noFW.csv", true);
+        //PropFusionAsymUndirectedGraphVar.executeFW = true;
+        //resultsTimeAndNodes_vsHeldKarp("withFW.csv", false);
 
         //randomLoop();
         //resultsFirstLB();
         //resultsTimeAndNodes();
         //getData();
-        String fileName = "coin100_1.atsp";
+        String fileName = "dc176.atsp";
         currentGraphSearch = GraphSearch.MAX_COST;
         int[][] data = getATSPInstance(fileName);
         n = data.length;
         int[][] jonker_matrix = makeJonkerMatrix(data);
         int presolve = (int)getBestSol(fileName);
 
+        Solver resultsPen2Cycle = fusionAsymUndirected(jonker_matrix, presolve, ABmode.JustHung, false);
+        System.out.println(resultsPen2Cycle.getBestSolutionValue());
         System.out.println("First");
-        fusionAsymUndirected(jonker_matrix, presolve, false, true);
-        fusionAsymUndirected(jonker_matrix, presolve, true, true);
     }
 
     public static double getBestSol(String filename) {
-        String filepath = "bestSols.csv";
+        String filepath = "oldBestSols.csv";
         String cleanedFilename = filename.replace(".atsp", "").trim();
         try (BufferedReader br = new BufferedReader(new FileReader(filepath))) {
             String line;
@@ -156,20 +163,34 @@ public class Main {
         }
     }*/
 
-    private static void resultsTimeAndNodes_vsHeldKarp() throws IOException {
+    private static double getSolOrTime(Solver result){
+        if(result.getTimeCount() > LIMIT){
+            if(result.getSolutionCount()>0){
+                return (double) result.getBestSolutionValue();
+            }
+            else{
+                return 0;
+            }
+        }
+        else{
+            return result.getTimeCount();
+        }
+    }
+
+    private static void resultsTimeAndNodes_vsHeldKarp(String out, boolean doBareme) throws IOException {
         String[] filenames = getATSPFilenames();
-        double[] fusionTime = new double[filenames.length];
-        double[] fusionNodeCount = new double[filenames.length];
+        double[] pen2CycleTime = new double[filenames.length];
+        double[] pen2CycleNodeCount = new double[filenames.length];
         double[] fusionTime2 = new double[filenames.length];
         double[] fusionNodeCount2 = new double[filenames.length];
 
         double[] benchTime = new double[filenames.length];
         double[] benchNodeCount = new double[filenames.length];
 
-        double[] sequencingTime = new double[filenames.length];
-        double[] sequencingNodeCount = new double[filenames.length];
-        double[] sequencingTime2 = new double[filenames.length];
-        double[] sequencingNodeCount2 = new double[filenames.length];
+        double[] justHungTime = new double[filenames.length];
+        double[] JustHungNodeCount = new double[filenames.length];
+        double[] penAllCyclesTime2 = new double[filenames.length];
+        double[] penAllCyclesNodeCount = new double[filenames.length];
         for (int i = 0; i < filenames.length; i++){
             int[][] data = getATSPInstance(filenames[i]);
             System.out.println("-----------------" + filenames[i]);
@@ -178,50 +199,47 @@ public class Main {
             //	int presolve = TSP_Utils.getOptimum(INSTANCE,REPO+"/bestSols.csv");
             int presolve = (int)getBestSol(filenames[i]); //9999999;
             currentGraphSearch = GraphSearch.MAX_COST;
-            /*Solver resultsBench = heldKarp(jonker_matrix,presolve);
-            benchTime[i] = resultsBench.getTimeCount();*/
-            Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, false, false);
-            sequencingTime[i] = resultsSequencing.getTimeCount();
-            Solver resultsFusion = fusionAsymUndirected(jonker_matrix, presolve, true, false);
-            fusionTime[i] = resultsFusion.getTimeCount();
+            if(doBareme){
+                Solver resultsBench = heldKarp(jonker_matrix,presolve);
+                benchTime[i] = resultsBench.getTimeCount();
+                benchNodeCount[i] = resultsBench.getNodeCount();
+            }
 
-			Solver resultsSequencing2 = fusionAsymUndirected(jonker_matrix, presolve, false, true);
-			sequencingTime2[i] = resultsSequencing2.getTimeCount();
+            Solver resultsJustHung = fusionAsymUndirected(jonker_matrix, presolve, ABmode.JustHung, false);
+            justHungTime[i] = getSolOrTime(resultsJustHung);
+            Solver resultsPen2Cycle = fusionAsymUndirected(jonker_matrix, presolve, ABmode.Pen2Cycle, false);
+            pen2CycleTime[i] = getSolOrTime(resultsPen2Cycle);
+			Solver resultsPenAllCycles = fusionAsymUndirected(jonker_matrix, presolve, ABmode.PenAllCycles, false);
+			penAllCyclesTime2[i] = getSolOrTime(resultsPenAllCycles);
 
-			Solver resultsFusion2 = fusionAsymUndirected(jonker_matrix, presolve, true, true);
-			fusionTime2[i] = resultsFusion2.getTimeCount();
+			/*Solver resultsFusion2 = fusionAsymUndirected(jonker_matrix, presolve, true, true);
+			fusionTime2[i] = resultsFusion2.getTimeCount();*/
 
-            fusionNodeCount[i] = resultsFusion.getNodeCount();
-            //benchNodeCount[i] = resultsBench.getNodeCount();
-            sequencingNodeCount[i] = resultsSequencing.getNodeCount();
-
-            sequencingNodeCount2[i] = resultsSequencing2.getNodeCount();
-            fusionNodeCount2[i] = resultsFusion2.getNodeCount();
+            pen2CycleNodeCount[i] = resultsPen2Cycle.getNodeCount();
+            JustHungNodeCount[i] = resultsJustHung.getNodeCount();
+            penAllCyclesNodeCount[i] = resultsPenAllCycles.getNodeCount();
+            /*fusionNodeCount2[i] = resultsFusion2.getNodeCount();*/
         }
 
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/HKNEW_vsSCC.csv"))) {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/" + out))) {
             bw.write("," + String.join(",", filenames)); bw.newLine();
             bw.write("Held-Karp - temps," + Arrays.stream(benchTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+SequencerTOUSCYCLES - temps," + Arrays.stream(sequencingTime)
+            bw.write("Held-Karp+AP - temps," + Arrays.stream(justHungTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+Entrelacer2CYCLE - temps," + Arrays.stream(fusionTime)
+            bw.write("Held-Karp+AP+2CYCLE - temps," + Arrays.stream(pen2CycleTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
 
-            bw.write("Held-Karp+SequencerTOUSCYCLESGUIDE - temps," + Arrays.stream(sequencingTime2)
-                    .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+Entrelacer2CYCLESGUIDE - temps," + Arrays.stream(fusionTime2)
+            bw.write("Held-Karp+AP+TOUSCYCLES - temps," + Arrays.stream(penAllCyclesTime2)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
 
             bw.write("Held-Karp - noeuds," + Arrays.stream(benchNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+Sequencer - noeuds," + Arrays.stream(sequencingNodeCount)
+            bw.write("Held-Karp+AP - noeuds," + Arrays.stream(JustHungNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+Entrelacer - noeuds," + Arrays.stream(fusionNodeCount)
+            bw.write("Held-Karp+AP+2Cycle - noeuds," + Arrays.stream(pen2CycleNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+SequencerGUIDE - noeuds," + Arrays.stream(sequencingNodeCount2)
-                    .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+EntrelacerGUIDE - noeuds," + Arrays.stream(fusionNodeCount2)
+            bw.write("Held-Karp+AP+TOUSCYCLES - noeuds," + Arrays.stream(penAllCyclesNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
         }
     }
@@ -244,21 +262,24 @@ public class Main {
         }
     }*/
 
-    /*private static void resultsFirstLB_vsHeldKarp() throws IOException {
+    private static void resultsFirstLB_vsHeldKarp() throws IOException {
         String[] filenames = getATSPFilenames();
         double[] fusionResults = new double[filenames.length];
         double[] benchResults = new double[filenames.length];
         for (int i = 0; i < filenames.length; i++){
             int[][] data = getATSPInstance(filenames[i]);
+            System.out.println("-----------------" + filenames[i]);
             n = data.length;
-
-            int[][] bench_matrix = makeJonkerMatrix(data);
+            int[][] jonker_matrix = makeJonkerMatrix(data);
             //	int presolve = TSP_Utils.getOptimum(INSTANCE,REPO+"/bestSols.csv");
-            int presolve = 9999999;
-            heldKarp(bench_matrix, presolve);
-            benchResults[i] = hk.firstLb;
-            //fusionAsym(data, presolve, true);
-            fusionResults[i] = fusion.firstLb;
+            int presolve = (int)getBestSol(filenames[i]); //9999999;
+            currentGraphSearch = GraphSearch.MAX_COST;
+            Solver resultsBench = heldKarp(jonker_matrix,presolve);
+            benchResults[i] = hk.firstLb + n*M;
+            System.out.println(hk.firstLb + n*M);
+            //Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, false, false);
+            fusionResults[i] = interleaveProp.firstLb + n*M;
+            System.out.println(interleaveProp.firstLb + n*M);
         }
 
         try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/resultsFirstLBHeldKarp.csv"))) {
@@ -268,7 +289,7 @@ public class Main {
             bw.write("maMéthode," + Arrays.stream(fusionResults)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
         }
-    }*/
+    }
 
 
     /*private static void resultsFirstLB_vsSequencing() throws IOException {
@@ -297,14 +318,105 @@ public class Main {
         }
     }*/
 
-    private static void randomLoop(){
-        n = 4;
+    static final int INF = Integer.MAX_VALUE / 2;
+
+    public static int tempMinCost(int[][] cost, int root) {
+  int n = cost.length;
+
+        List<int[]> edges = new ArrayList<>();
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+                if (i != j && cost[i][j] < bigValue)
+                    edges.add(new int[]{i, j, cost[i][j]});
+
+        int total = 0;
+        while (true) {
+            int[] in = new int[n], pre = new int[n];
+            Arrays.fill(in, INF);
+            for (int[] e : edges)
+                if (e[0] != e[1] && e[2] < in[e[1]]) {
+                    in[e[1]] = e[2];
+                    pre[e[1]] = e[0];
+                }
+            for (int v = 0; v < n; v++)
+                if (v != root && in[v] == INF) return -1;
+
+            int[] id = new int[n], vis = new int[n];
+            Arrays.fill(id, -1);
+            Arrays.fill(vis, -1);
+            int cnt = 0;
+            in[root] = 0;
+            for (int v = 0; v < n; v++) {
+                total += in[v];
+                int x = v;
+                while (x != root && vis[x] != v && id[x] == -1) {
+                    vis[x] = v;
+                    x = pre[x];
+                }
+                if (x != root && id[x] == -1) {
+                    for (int u = pre[x]; u != x; u = pre[u]) id[u] = cnt;
+                    id[x] = cnt++;
+                }
+            }
+            if (cnt == 0) break;
+
+            for (int v = 0; v < n; v++)
+                if (id[v] == -1) id[v] = cnt++;
+            for (int[] e : edges) {
+                int v = e[1];
+                e[0] = id[e[0]];
+                e[1] = id[e[1]];
+                if (e[0] != e[1]) e[2] -= in[v];
+            }
+            n = cnt;
+            root = id[root];
+        }
+        return total;
+    }
+
+    private static void testARBO() {
+        n = 37;
         while (true){
             System.out.println(seed);
             int[][] data = randomMatrix();
+            int[][] dataCopy = Arrays.stream(data).map(int[]::clone).toArray(int[][]::new);
             int[][] jonker_matrix = makeJonkerMatrix(data);
             int presolve = 500000;
-            Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, true, false);
+            EdmondsArbo arbo = new EdmondsArbo();
+            double bound;
+            try{
+                bound = arbo.getArboBound(data);
+            } catch (Exception e){
+                throw new RuntimeException();
+            }
+
+            double bound2 = tempMinCost(dataCopy, 0);
+            if (bound2 != bound){
+                int a = 3;
+            }
+            //Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, true, false);
+            //System.out.println("result " + graph.toString());
+            //Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, false, false);
+            //System.out.println("result " + graph.toString());
+			/*if(result1.getNodeCount() < result2.getNodeCount()){
+				int a = 3;
+			}*/
+            /*if(result1.getBestSolutionValue().intValue() != result2.getBestSolutionValue().intValue()){
+                int a = 3;
+            }*/
+        }
+    }
+
+    private static void randomLoop() {
+        n = 37;
+        while (true){
+            System.out.println(seed);
+            int[][] data = randomMatrix();
+            int[][] dataCopy = Arrays.stream(data).map(int[]::clone).toArray(int[][]::new);
+            int[][] jonker_matrix = makeJonkerMatrix(data);
+            int presolve = 500000;
+
+            //Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, true, false);
             //System.out.println("result " + graph.toString());
             //Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, false, false);
             //System.out.println("result " + graph.toString());
@@ -359,9 +471,10 @@ public class Main {
         return getDataFromProblem(problem);
     }
 
-    private static String FOLDER = "atsp/";
+    //private static String FOLDER = "atsp/";
+    //private static String FOLDER = "old_atsp/";
     //private static String FOLDER = "easy_atsp/";
-    //private static String FOLDER = "decent_atsp/";
+    private static String FOLDER = "decent_atsp/";
     private static int[][] getATSPInstance(String name) throws IOException {
         org.moeaframework.problem.tsplib.TSPInstance problem = new TSPInstance(new File(FOLDER + "/" + name));
         return getDataFromProblem(problem);
@@ -481,7 +594,6 @@ public class Main {
             }
         }
 
-
         return solver;
         //return solver.getBestSolutionValue().intValue() + M*n;
     }
@@ -538,9 +650,9 @@ public class Main {
         return search(costMatrix, true, GraphSearch.MAX_COST, false);
     }
 
-    private static Solver fusionAsymUndirected(int[][] costMatrix, int initialUB, boolean interleave, boolean guidedSearch){
+    private static Solver fusionAsymUndirected(int[][] costMatrix, int initialUB, ABmode aBmode, boolean guidedSearch){
         createModel(costMatrix, - (n)*M+initialUB);
-        interleaveProp = new PropFusionAsymUndirectedGraphVar(graph, totalCost, costMatrix, interleave);
+        interleaveProp = new PropFusionAsymUndirectedGraphVar(graph, totalCost, costMatrix, aBmode);
         hk = new PropLagrOneTree(graph, totalCost, costMatrix);
         Propagator[] props = new Propagator[]{
                 interleaveProp,

@@ -198,16 +198,18 @@ public class TSPInstance {
 				} else {
 					String[] tokens = line.split(":");
 					String key = tokens[0].trim();
-					String value = tokens[1].trim();
-					
+					String value;
+					if(tokens.length > 1){
+						value = tokens[1].trim();
+					}
+					else{
+						value = null;
+					}
+
 					if (key.equals("NAME")) {
 						name = value;
 					} else if (key.equals("COMMENT")) {
-						if (comment == null) {
-							comment = value;
-						} else {
-							comment = comment + "\n" + value;
-						}
+						comment = "";
 					} else if (key.equals("TYPE")) {
 						dataType = DataType.valueOf(value);
 					} else if (key.equals("DIMENSION")) {

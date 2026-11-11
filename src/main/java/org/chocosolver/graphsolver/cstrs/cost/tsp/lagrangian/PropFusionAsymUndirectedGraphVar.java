@@ -84,6 +84,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	protected boolean waitFirstSol;
 	protected int nbSprints;
 	private static int bigValue = 2000000000;
+	public static boolean executeFW = false;
 	public double firstLb = Double.NEGATIVE_INFINITY;
 	public int[] bestMatching;
 
@@ -99,21 +100,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		Result result = hung.execute(costs, remainingRows, remainingCols);
 		return result;
 	}
-
-	public Result hungarianIteration(double[][] costs){
-		Result result = hung.executeOneIter(costs, remainingRows, remainingCols);
-		return result;
-	}
-
-
-	private int countStars(int[] matching) {
-		int count = 0;
-		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1))
-				if (matching[i] != -1)
-					count++;
-		return count;
-	}
-
 
 	public static class Result {
 		public final double lb;
@@ -228,7 +214,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			if (!visited.get(i) /*&& cycle == null*/) {
 				List<Integer> cycle = dfsFindCycle(matching, i, visited,
 						new HashMap<>(), new HashSet<>());
-				int k = 5;
 				if (cycle != null && cycle.size() < n && cycle.size() <= tailleMaxCycles /*&& (cycle.size() < nRemaining/k || cycle.size() > nRemaining-nRemaining/k)*/ ) {
 					cycles.add(cycle);
 				}
@@ -272,7 +257,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			}
 
 			if(minimumInRow > bigValue*0.9 || minimumInCol > bigValue*0.9) {
-				System.out.println("found inconsistency in edmonds ");
+				//System.out.println("found inconsistency in edmonds ");
 				this.fails();
 			}
 
@@ -306,12 +291,12 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			matching[i] = arcsEnforcedFromState.quickGet(i);
 		}
 
-		List<Integer>[] A = new List[n];
+		BitSet[] A = new BitSet[n];
 		for (int i =0; i<n; i++){
-			A[i] = new ArrayList<>();
+			A[i] = new BitSet(n);
 			int j = matching[i];
 			if (j != root){
-				A[i].add(j);
+				A[i].set(j);
 			}
 		}
 
@@ -328,15 +313,11 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				boolean validSCC = true;
 				BitSet sccBs = createBitsetFromList(scc);
 				double minimumInCol = bigValue;
-				int minimumi = -1;
-				int minimumj = -1;
 
 				for (int i = 0; i < n; i++) {
 					if (sccBs.get(i)) continue;
-					for (int j : A[i]) {
-						if (sccBs.get(j)) {
-							validSCC = false;
-						}
+					if (A[i].intersects(sccBs)) {
+						validSCC = false;
 					}
 				}
 
@@ -347,8 +328,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 								if (sccBs.get(j)){
 									if(matrix[i][j] < minimumInCol){
 										minimumInCol = matrix[i][j];
-										minimumi = i;
-										minimumj = j;
 									}
 								}
 							}
@@ -363,10 +342,9 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 						this.fails();
 					}
 
-					A[minimumi].add(minimumj);
 					componentFound = true;
 
-					penalizeCycle(sccBs, matrix, minimum, true);
+					penalizeSCC(sccBs, matrix, minimum, A);
 					lb += minimum;
 				}
 			}
@@ -391,6 +369,18 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				for (int j = cycle.nextSetBit(0); j >= 0; j = cycle.nextSetBit(j + 1)) {
 					if (remainingCols.get(j) && !cycle.get(i))
 						matrix[i][j] -= k;
+				}
+			}
+		}
+	}
+
+	private void penalizeSCC(BitSet cycle, double[][] matrix, double k, BitSet[] A){
+		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
+			for (int j = cycle.nextSetBit(0); j >= 0; j = cycle.nextSetBit(j + 1)) {
+				if (remainingCols.get(j) && !cycle.get(i))
+					matrix[i][j] -= k;
+				if(matrix[i][j] == 0){
+					A[i].set(j);
 				}
 			}
 		}
@@ -447,19 +437,21 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 
 	int tailleMaxCycles;
 
-	public PropFusionAsymUndirectedGraphVar(UndirectedGraphVar graph, IntVar cost, int[][] costMatrix, boolean interleave) {
+	public PropFusionAsymUndirectedGraphVar(UndirectedGraphVar graph, IntVar cost, int[][] costMatrix, ABmode abMode) {
 		this(new Variable[]{graph, cost}, costMatrix);
 		g = graph.getUB();
 		gV = graph;
 		costVar = cost;
 		this.deltaMonitor = gV.monitorDelta(this);
-		if(interleave){
+		if(abMode == ABmode.Pen2Cycle){
 			tailleMaxCycles = 2;
-		}else{
+			this.interleave = true;
+		}else if (abMode == ABmode.PenAllCycles){
 			tailleMaxCycles=n;
+			this.interleave = true;
+		}else if(abMode == ABmode.JustHung){
+			this.interleave = false;
 		}
-		this.interleave = true;
-
 	}
 
 
@@ -487,6 +479,10 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	}
 
 	private void arcRemovedPropagation(int from, int to) throws ContradictionException {
+		if(from == 94 && to == 249){
+			System.out.println("herePenalize");
+			int a =3;
+		}
 		if (from >= n && to < n) {
 			from = from % n;
 		}
@@ -504,6 +500,15 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	}
 
 	private void arcEnforcedPropagation(int from, int to) throws ContradictionException {
+		if (!gV.getLB().edgeExists(from, to)) {
+			System.out.println("PHANTOM " + from + "-" + to
+					+ " inLB(rev)=" + gV.getLB().edgeExists(to, from)
+					+ " inUB=" + g.edgeExists(from, to)
+					+ " rowSide=" + (from >= n) + " world=" + model.getEnvironment().getWorldIndex());
+		}
+		if(from == 94 && to == 249){
+			int a =3;
+		}
 		if(g.getNeighOf(from).size() != 2){
 			for (int neigh: g.getNeighOf(from).toArray()) {
 				if(neigh != to && neigh != from+n && neigh != from-n){
@@ -512,9 +517,14 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				}
 			}
 		}
-		if(!g.edgeExists(from, to)){
-			System.out.println(from + "->" + to + " is enforced but dont exist");
+		if (!g.edgeExists(from, to)) {
+			System.out.println(from + "->" + to + " enforced but not in UB"
+					+ " | inLB=" + gV.getLB().edgeExists(from, to)
+					+ " | world=" + model.getEnvironment().getWorldIndex()
+					+ " | removedThisCall=" + removed);
+			//new Throwable().printStackTrace();
 		}
+
 
 		if (from >= n && to < n) {
 			from = from % n;
@@ -721,7 +731,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		logState();
 
 		matching = result.matching;
-		if((removed > 0)){
+		if((removed > 0 && executeFW)){
 			filterFloydWarshallNew(lowerBound, matching);
 		}
 
@@ -739,28 +749,10 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		lbBegin = lowerBound;
 		removed = 0;
 
-		result = hungarianSSP(reducedCosts);
-		lowerBound += result.lb;
-		reducedCosts = result.array;
-
-		basicFiltering(reducedCosts, lowerBound);
-		if (lowerBound > maxLb) {
-			maxLb = lowerBound;
-			if (result.matching!= null){
-				bestMatching = result.matching;
-			}
-		}
-
-		try{
-			if(tailleMaxCycles > 2){
-				result = fullEdmondsSCC(reducedCosts, false, result.matching);
-			} else{
-				result = edmonds2cycles(reducedCosts, false, result.matching);
-			}
-		}
-		catch (ContradictionException e){
-			System.out.println("edmondsThrow");
-			throw e;
+		if(tailleMaxCycles > 2){
+			result = fullEdmondsSCC(reducedCosts, false, matching);
+		} else{
+			result = edmonds2cycles(reducedCosts, false, matching);
 		}
 		lowerBound += result.lb;
 		reducedCosts = result.array;
@@ -784,7 +776,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		costVar.updateLowerBound((int) Math.ceil(maxLb), this);
 
 		removed = 0;
-
 	}
 
 	private void logState() throws ContradictionException {
@@ -842,6 +833,9 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	// INFERENCE
 	//***********************************************************************************
 	public void remove(int from, int to) throws ContradictionException {
+		if(from==94 && to==249){
+			int a =3;
+		}
 		removed++;
 		gV.removeArc(from, to, this);
 	}

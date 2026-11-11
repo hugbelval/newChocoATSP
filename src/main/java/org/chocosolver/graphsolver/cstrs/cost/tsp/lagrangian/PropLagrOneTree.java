@@ -65,6 +65,7 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 	private final int[][] originalCosts;
 	private final double[] penalities;
 	private double totalPenalities;
+	public double firstLb = Double.NEGATIVE_INFINITY;
 	public UndirectedGraph mst;
 	private double step;
 	private final AbstractTreeFinder HKfilter, HK;
@@ -102,6 +103,7 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 		if (waitFirstSol && getModel().getSolver().getSolutionCount() == 0) {
 			return;//the UB does not allow to prune
 		}
+
 		// initialisation
 		rebuild();
 		setCosts();
@@ -110,6 +112,24 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 			lb = obj.getLB();
 			lagrangianRelaxation();
 		} while (lb < obj.getLB());
+
+		if(firstLb == Double.NEGATIVE_INFINITY){
+			firstLb = obj.getLB();
+		}
+	}
+
+
+	private void enforceInitial() throws ContradictionException {
+		for (int i = 0; i < n/2; i++) {
+			//System.out.println("[FUSION][INIT-ENFORCE] " + (i+n) + " -> " + i);
+			gV.enforceArc(i+n/2, i, this);
+			for (int j = 0; j < n/2; j++) {
+				//System.out.println("[FUSION][INIT-REMOVE] " + i + " -> " + j);
+				gV.removeArc(i,j, this);
+				//System.out.println("[FUSION][INIT-REMOVE] " + (i+n) + " -> " + (j+n));
+				gV.removeArc(i+n/2,j+n/2, this);
+			}
+		}
 	}
 
 	private void lagrangianRelaxation() throws ContradictionException {

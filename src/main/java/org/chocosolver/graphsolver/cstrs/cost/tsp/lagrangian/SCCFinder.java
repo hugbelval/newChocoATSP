@@ -1,6 +1,7 @@
 package org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Stack;
 import java.util.Arrays;
@@ -16,7 +17,7 @@ public class SCCFinder {
     // inSt[]   -> Boolean array to check whether a node is in stack
     // timer    -> Global time counter for discovery times
     // allSCCs  -> Stores all strongly connected components
-    static void findSCC(int u, List<Integer>[] adj, int[] disc, int[] low, boolean[] inSt,
+    static void findSCC(int u, BitSet[] adj, int[] disc, int[] low, boolean[] inSt,
                         Stack<Integer> st, int[] timer, ArrayList<ArrayList<Integer>> allSCCs) {
 
         // Initialize discovery time and low value
@@ -27,8 +28,8 @@ public class SCCFinder {
         inSt[u] = true;
 
         // Go through all vertices adjacent to this
-        for (int v : adj[u]) {
 
+        for (int v = adj[u].nextSetBit(0); v >= 0; v = adj[u].nextSetBit(v + 1)){
             // If v is not visited yet, then recur for it
             // Case 1: Tree edge
             if (disc[v] == -1) {
@@ -71,7 +72,7 @@ public class SCCFinder {
 
     // The function to do DFS traversal.
     // It uses findSCC() to find all strongly connected components
-    static ArrayList<ArrayList<Integer>> getSCCs(List<Integer>[] adj) {
+    static ArrayList<ArrayList<Integer>> getSCCs(BitSet[] adj) {
         int n = adj.length;
 
         int[] disc = new int[n];
@@ -103,7 +104,7 @@ public class SCCFinder {
             }
         }
 
-        return multipleVertexSCCs;
+        return allSCCs;//multipleVertexSCCs;
         //return allSCCs;
     }
 
