@@ -338,7 +338,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				double minimum = minimumInCol; //Math.max(minimumInRow, minimumInCol);
 				if(!sccBs.get(root) && validSCC){
 					if (minimum > bigValue*0.9){
-						System.out.println("found inconsistency in edmonds ");
+						//System.out.println("found inconsistency in edmonds ");
 						this.fails();
 					}
 
@@ -399,7 +399,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	int M;
 	int[][] originalCostMatrix;
 	protected PropFusionAsymUndirectedGraphVar(Variable[] vars, int[][] costMatrix) {
-	super(vars, PropagatorPriority.QUADRATIC, true);
+	super(vars, PropagatorPriority.QUADRATIC, false);
 		graphData = "";
 		n = costMatrix.length / 2;
 		nRemaining = n;
@@ -479,6 +479,12 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	}
 
 	private void arcRemovedPropagation(int from, int to) throws ContradictionException {
+		processCounter++;
+		if (g.edgeExists(from, to)) {
+			System.out.println("Phantom, deltaSize " +gV.getDelta().getSize(GraphEventType.REMOVE_ARC.getMask()));
+			//System.out.println("PhantomRemove" + model.getEnvironment().getTimeStamp());
+			//return; // stale removal: edge is back in UB
+		}
 		if(from == 94 && to == 249){
 			System.out.println("herePenalize");
 			int a =3;
@@ -501,10 +507,10 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 
 	private void arcEnforcedPropagation(int from, int to) throws ContradictionException {
 		if (!gV.getLB().edgeExists(from, to)) {
-			System.out.println("PHANTOM " + from + "-" + to
+			/*System.out.println("PHANTOM " + from + "-" + to
 					+ " inLB(rev)=" + gV.getLB().edgeExists(to, from)
 					+ " inUB=" + g.edgeExists(from, to)
-					+ " rowSide=" + (from >= n) + " world=" + model.getEnvironment().getWorldIndex());
+					+ " rowSide=" + (from >= n) + " world=" + model.getEnvironment().getWorldIndex());*/
 		}
 		if(from == 94 && to == 249){
 			int a =3;
@@ -513,7 +519,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			for (int neigh: g.getNeighOf(from).toArray()) {
 				if(neigh != to && neigh != from+n && neigh != from-n){
 					remove(from, neigh);
-					arcRemovedPropagation(from, neigh);
+					//arcRemovedPropagation(from, neigh);
 				}
 			}
 		}
@@ -574,61 +580,75 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		lowerBound = lowerBoundState.get();
 	}
 
-	public void propagate(int idVar, int evtMask) throws ContradictionException {
-		setReducedCostsFromState();
-		updateRemaining();
-		deltaMonitor.freeze();
-		try{
-			if(GraphEventType.isRemArc(evtMask)){
-				deltaMonitor.forEachArc(onArcRemoved, GraphEventType.REMOVE_ARC);
-			}
+	int processCounter = 0;
 
-			if(GraphEventType.isAddArc(evtMask)){
-				deltaMonitor.forEachArc(onArcEnforced, GraphEventType.ADD_ARC);
+	private void syncWithGraph() throws ContradictionException {
+		// 1. removals: any potential-less arc still in the active submatrix
+		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
+			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)) {
+				if (i != j && !g.edgeExists(i + n, j)) {
+					reducedCosts[i][j] = bigValue;
+				}
 			}
 		}
-		finally {
-			deltaMonitor.unfreeze();
+		// 2. enforcements: edges in the LB between row-node i+n and a column j
+		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
+			for (int j : gV.getLB().getNeighOf(i + n).toArray()) {
+				if (j < n && j != i && remainingCols.get(j)) {
+					enforceMatch(i, j);
+					break;               // a row has one match
+				}
+			}
 		}
+	}
 
-		logState();
-		removed = 0;
-		justHungFW();
+	private void enforceMatch(int i, int j) throws ContradictionException {
+		// degree cleanup, as in your arcEnforcedPropagation, for both endpoints
+		cleanup(i + n, j);
+		cleanup(j, i + n);
+		if (!remainingRows.get(i) || !remainingCols.get(j)) return;
+		arcsEnforcedFromState.set(i, j);
+		remainingRows.clear(i);
+		remainingCols.clear(j);
+		nRemaining--;
+		lowerBound += reducedCosts[i][j];
+	}
 
-		if(interleave){
-			fusionRelaxationAsym();
+	private void cleanup(int from, int to) throws ContradictionException {
+		if (g.getNeighOf(from).size() != 2) {
+			for (int nb : g.getNeighOf(from).toArray()) {
+				if (nb != to && nb != from + n && nb != from - n) remove(from, nb);
+			}
 		}
 	}
 
 	public void propagate(int evtmask) throws ContradictionException {
-		setReducedCostsFromState();
-		remainingRows = new BitSet(n);
-		remainingCols = new BitSet(n);
-		remainingRows.flip(0,n);
-		remainingCols.flip(0,n);
-		nRemaining = remainingRows.cardinality();
+    if (firstProp) {
+        remainingRows = new BitSet(n);
+        remainingCols = new BitSet(n);
+        remainingRows.flip(0, n);
+        remainingCols.flip(0, n);
+        nRemaining = n;
 
-		if (firstProp){
-			enforceInitial();
-			firstProp = false;
-		}
+        enforceInitial();            // enforces (i+n,i), removes the infinite zones
+        setCosts();                  // uses the UB after enforceInitial
+        for (int i = 0; i < n; i++) reducedCosts[i] = costs[i].clone();
+        lowerBound = M * n;
+        logState();                  // trailed copy of reducedCosts and lowerBound
+        firstProp = false;
+    } else {
+        setReducedCostsFromState();
+    }
 
-		if (waitFirstSol && getModel().getSolver().getSolutionCount() == 0) {
-			return;//the UB does not allow to prune
-		}
-		// initialisation
-		setCosts();
-		reducedCosts = Arrays.stream(costs).map(double[]::clone).toArray(double[][]::new);
-		lowerBound = M*n;
-		justHungFW();
-		if(interleave){
-			fusionRelaxationAsym();
-		}
+    updateRemaining();
+    syncWithGraph();
+    syncWithGraph();   // cleanup() in enforceMatch can remove edges, so sync again
 
-		if(firstLb == Double.NEGATIVE_INFINITY){
-			firstLb = costVar.getLB();
-		}
-	}
+    logState();
+    removed = 0;
+    justHungFW();
+    if (interleave) fusionRelaxationAsym();
+}
 
 
 	int iter = 0;

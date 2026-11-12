@@ -87,7 +87,7 @@ public class Main {
     private static IntVar totalCost;
     private static UndirectedGraphVar graph;
     private static DirectedGraphVar digraph;
-    private static int LIMIT = 1500; // in seconds
+    private static int LIMIT = 600; // in seconds
     private static int n;
     private static int M = 1000000;
     private static int bigValue = 999999999;
@@ -96,9 +96,12 @@ public class Main {
         //resultsFirstLB_vsSequencing();
 
         //resultsMyMethod();true
+
+        PropFusionAsymUndirectedGraphVar.executeFW = false;
+        //randomLoop();
         resultsTimeAndNodes_vsHeldKarp("noFW.csv", true);
-        //PropFusionAsymUndirectedGraphVar.executeFW = true;
-        //resultsTimeAndNodes_vsHeldKarp("withFW.csv", false);
+        PropFusionAsymUndirectedGraphVar.executeFW = true;
+        resultsTimeAndNodes_vsHeldKarp("withFW.csv", false);
 
         //randomLoop();
         //resultsFirstLB();
@@ -111,13 +114,13 @@ public class Main {
         int[][] jonker_matrix = makeJonkerMatrix(data);
         int presolve = (int)getBestSol(fileName);
 
-        Solver resultsPen2Cycle = fusionAsymUndirected(jonker_matrix, presolve, ABmode.JustHung, false);
+        Solver resultsPen2Cycle = heldKarp(jonker_matrix, presolve);
         System.out.println(resultsPen2Cycle.getBestSolutionValue());
         System.out.println("First");
     }
 
     public static double getBestSol(String filename) {
-        String filepath = "oldBestSols.csv";
+        String filepath = "bestSols.csv";
         String cleanedFilename = filename.replace(".atsp", "").trim();
         try (BufferedReader br = new BufferedReader(new FileReader(filepath))) {
             String line;
@@ -274,7 +277,7 @@ public class Main {
             //	int presolve = TSP_Utils.getOptimum(INSTANCE,REPO+"/bestSols.csv");
             int presolve = (int)getBestSol(filenames[i]); //9999999;
             currentGraphSearch = GraphSearch.MAX_COST;
-            Solver resultsBench = heldKarp(jonker_matrix,presolve);
+            Solver kjjjjjjjjoikiiiiiikresultsBench = heldKarp(jonker_matrix,presolve);
             benchResults[i] = hk.firstLb + n*M;
             System.out.println(hk.firstLb + n*M);
             //Solver resultsSequencing = fusionAsymUndirected(jonker_matrix, presolve, false, false);
@@ -290,7 +293,6 @@ public class Main {
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
         }
     }
-
 
     /*private static void resultsFirstLB_vsSequencing() throws IOException {
         String[] filenames = getATSPFilenames();
@@ -408,7 +410,7 @@ public class Main {
     }
 
     private static void randomLoop() {
-        n = 37;
+        n = 4;
         while (true){
             System.out.println(seed);
             int[][] data = randomMatrix();
@@ -416,7 +418,7 @@ public class Main {
             int[][] jonker_matrix = makeJonkerMatrix(data);
             int presolve = 500000;
 
-            //Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, true, false);
+            Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, ABmode.Pen2Cycle, false);
             //System.out.println("result " + graph.toString());
             //Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, false, false);
             //System.out.println("result " + graph.toString());
@@ -471,10 +473,10 @@ public class Main {
         return getDataFromProblem(problem);
     }
 
-    //private static String FOLDER = "atsp/";
+    private static String FOLDER = "atsp/";
     //private static String FOLDER = "old_atsp/";
     //private static String FOLDER = "easy_atsp/";
-    private static String FOLDER = "decent_atsp/";
+    //private static String FOLDER = "decent_atsp/";
     private static int[][] getATSPInstance(String name) throws IOException {
         org.moeaframework.problem.tsplib.TSPInstance problem = new TSPInstance(new File(FOLDER + "/" + name));
         return getDataFromProblem(problem);

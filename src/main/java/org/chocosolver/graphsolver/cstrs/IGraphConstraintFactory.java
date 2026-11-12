@@ -1027,7 +1027,6 @@ public interface IGraphConstraintFactory {
 		return new Constraint("TSP", props);
 	}
 
-
 	default Constraint tsp_general(UndirectedGraphVar GRAPHVAR, IntVar COSTVAR, int[][] EDGE_COSTS, Propagator[] props) {
 		props = ArrayUtils.append(props, cycleProps(GRAPHVAR),
 				new Propagator[]{new PropCycleCostSimple(GRAPHVAR, COSTVAR, EDGE_COSTS)});
