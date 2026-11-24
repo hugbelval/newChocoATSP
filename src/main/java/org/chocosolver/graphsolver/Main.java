@@ -27,7 +27,6 @@
 
 package org.chocosolver.graphsolver;
 
-import org.chocosolver.graphsolver.GraphModel;
 //import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.PropFusionASym;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.PropCycleCostSimple;
 import org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian.ABmode;
@@ -42,8 +41,7 @@ import org.chocosolver.solver.Model;
 import org.chocosolver.solver.Solver;
 import org.chocosolver.solver.constraints.Constraint;
 import org.chocosolver.solver.constraints.Propagator;
-import org.chocosolver.solver.exception.ContradictionException;
-import org.chocosolver.solver.variables.IntVar;
+        import org.chocosolver.solver.variables.IntVar;
 import org.chocosolver.util.objects.graphs.DirectedGraph;
 import org.chocosolver.util.objects.graphs.UndirectedGraph;
 import org.chocosolver.util.objects.setDataStructures.SetType;
@@ -77,7 +75,6 @@ import java.util.stream.Collectors;
  * @since Oct. 2012
  */
 public class Main {
-
     //***********************************************************************************
     // MAIN
     //***********************************************************************************
@@ -97,11 +94,11 @@ public class Main {
 
         //resultsMyMethod();true
 
-        PropFusionAsymUndirectedGraphVar.executeFW = false;
+        PropFusionAsymUndirectedGraphVar.executeFW = true;
         //randomLoop();
         resultsTimeAndNodes_vsHeldKarp("noFW.csv", true);
-        PropFusionAsymUndirectedGraphVar.executeFW = true;
-        resultsTimeAndNodes_vsHeldKarp("withFW.csv", false);
+        //PropFusionAsymUndirectedGraphVar.executeFW = true;
+        //resultsTimeAndNodes_vsHeldKarp("withFW.csv", false);
 
         //randomLoop();
         //resultsFirstLB();
@@ -210,18 +207,14 @@ public class Main {
 
             Solver resultsJustHung = fusionAsymUndirected(jonker_matrix, presolve, ABmode.JustHung, false);
             justHungTime[i] = getSolOrTime(resultsJustHung);
-            Solver resultsPen2Cycle = fusionAsymUndirected(jonker_matrix, presolve, ABmode.Pen2Cycle, false);
+            Solver resultsPen2Cycle = fusionAsymUndirected(jonker_matrix, presolve, ABmode.Pen2Cycles, false);
             pen2CycleTime[i] = getSolOrTime(resultsPen2Cycle);
 			Solver resultsPenAllCycles = fusionAsymUndirected(jonker_matrix, presolve, ABmode.PenAllCycles, false);
 			penAllCyclesTime2[i] = getSolOrTime(resultsPenAllCycles);
 
-			/*Solver resultsFusion2 = fusionAsymUndirected(jonker_matrix, presolve, true, true);
-			fusionTime2[i] = resultsFusion2.getTimeCount();*/
-
             pen2CycleNodeCount[i] = resultsPen2Cycle.getNodeCount();
             JustHungNodeCount[i] = resultsJustHung.getNodeCount();
             penAllCyclesNodeCount[i] = resultsPenAllCycles.getNodeCount();
-            /*fusionNodeCount2[i] = resultsFusion2.getNodeCount();*/
         }
 
         try (BufferedWriter bw = new BufferedWriter(new FileWriter("src/" + out))) {
@@ -230,7 +223,7 @@ public class Main {
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
             bw.write("Held-Karp+AP - temps," + Arrays.stream(justHungTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+AP+2CYCLE - temps," + Arrays.stream(pen2CycleTime)
+            bw.write("Held-Karp+AP+INCREASING - temps," + Arrays.stream(pen2CycleTime)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
 
             bw.write("Held-Karp+AP+TOUSCYCLES - temps," + Arrays.stream(penAllCyclesTime2)
@@ -240,7 +233,7 @@ public class Main {
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
             bw.write("Held-Karp+AP - noeuds," + Arrays.stream(JustHungNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
-            bw.write("Held-Karp+AP+2Cycle - noeuds," + Arrays.stream(pen2CycleNodeCount)
+            bw.write("Held-Karp+AP+INCREASING - noeuds," + Arrays.stream(pen2CycleNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
             bw.write("Held-Karp+AP+TOUSCYCLES - noeuds," + Arrays.stream(penAllCyclesNodeCount)
                     .mapToObj(String::valueOf).collect(Collectors.joining(","))); bw.newLine();
@@ -418,7 +411,7 @@ public class Main {
             int[][] jonker_matrix = makeJonkerMatrix(data);
             int presolve = 500000;
 
-            Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, ABmode.Pen2Cycle, false);
+            Solver result1 = fusionAsymUndirected(jonker_matrix, 999999, ABmode.PenIncreasingCycles, false);
             //System.out.println("result " + graph.toString());
             //Solver result2 = fusionAsymUndirected(jonker_matrix, 999999, false, false);
             //System.out.println("result " + graph.toString());
@@ -473,10 +466,10 @@ public class Main {
         return getDataFromProblem(problem);
     }
 
-    private static String FOLDER = "atsp/";
+    //private static String FOLDER = "atsp/";
     //private static String FOLDER = "old_atsp/";
     //private static String FOLDER = "easy_atsp/";
-    //private static String FOLDER = "decent_atsp/";
+    private static String FOLDER = "decent_atsp/";
     private static int[][] getATSPInstance(String name) throws IOException {
         org.moeaframework.problem.tsplib.TSPInstance problem = new TSPInstance(new File(FOLDER + "/" + name));
         return getDataFromProblem(problem);
@@ -539,7 +532,7 @@ public class Main {
         digraph = model.digraphVar("G", GLB, GUB);
     }
 
-    private static Solver search(int[][] costMatrix, boolean benchMatrix, int graphSearch, boolean selectedInterleave){
+    private static Solver search(int[][] costMatrix, boolean benchMatrix, int graphSearch, boolean costGuidedSearch){
         Solver solver = model.getSolver();
         // Fail first principle (requires a very good initial upper bound)
         GraphSearch heuristic;
@@ -552,12 +545,12 @@ public class Main {
         else{
             heuristic = new GraphSearch(graph, costMatrix, interleaveProp, hk);
         }
-        solver.setSearch(heuristic.configure(selectedInterleave, false, graphSearch).useLastConflict());
+        solver.setSearch(heuristic.configure(costGuidedSearch, false, graphSearch));
         solver.limitTime(LIMIT+"s");
         //solver.showDecisions();
         model.setObjective(Model.MINIMIZE,totalCost);
 
-// Print every decision and backtrack
+        // Print every decision and backtrack
 
         while (solver.solve()){
             System.out.println("After " + solver.getNodeCount() + "nodes,");

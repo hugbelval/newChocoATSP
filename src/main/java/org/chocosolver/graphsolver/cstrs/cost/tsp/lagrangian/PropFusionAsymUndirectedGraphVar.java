@@ -29,7 +29,7 @@ package org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian;
 
 import org.chocosolver.graphsolver.variables.GraphEventType;
 import org.chocosolver.graphsolver.variables.UndirectedGraphVar;
-import org.chocosolver.graphsolver.variables.delta.GraphDeltaMonitor;
+import org.chocosolver.memory.IStateBitSet;
 import org.chocosolver.memory.IStateDouble;
 import org.chocosolver.memory.IStateIntVector;
 import org.chocosolver.solver.constraints.Propagator;
@@ -40,16 +40,9 @@ import org.chocosolver.solver.variables.Variable;
 import org.chocosolver.solver.variables.events.IntEventType;
 import org.chocosolver.util.ESat;
 import org.chocosolver.util.objects.graphs.UndirectedGraph;
-import org.chocosolver.util.procedure.PairProcedure;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * TSP Lagrangian relaxation
@@ -66,28 +59,21 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 
 	protected UndirectedGraph g;
 	protected UndirectedGraphVar gV;
-	private GraphDeltaMonitor deltaMonitor;
-	private PairProcedure onArcRemoved;
-	private PairProcedure onArcEnforced;
 
 	protected IntVar costVar;
 	protected int n;
-	protected int[][] originalSmallCosts;
-	protected double[][] costs;
+	protected double[][] originalSmallCosts;
 	protected double[][] reducedCosts;
+	BitSet remainingRows;
+	BitSet remainingCols;
 	private IStateDouble[][] reducedCostsState;
 	private IStateDouble lowerBoundState;
 	private IStateIntVector arcsEnforcedFromState;
-	BitSet remainingRows;
-	BitSet remainingCols;
 	int nRemaining;
-	protected boolean waitFirstSol;
-	protected int nbSprints;
-	private static int bigValue = 2000000000;
+	public static int bigValue = 2000000000;
 	public static boolean executeFW = false;
 	public double firstLb = Double.NEGATIVE_INFINITY;
 	public int[] bestMatching;
-
 	private double lowerBound;
 	public String graphData;
 	private HungarianAlgorithm hung;
@@ -95,12 +81,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	//***********************************************************************************
 	// CONSTRUCTORS
 	//***********************************************************************************
-
-	public Result hungarianSSP(double[][] costs){
-		Result result = hung.execute(costs, remainingRows, remainingCols);
-		return result;
-	}
-
 	public static class Result {
 		public final double lb;
 		public final double[][] array;
@@ -113,287 +93,24 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		}
 	}
 
-	public static List<Integer> dfsFindCycle(int[] matching, int node, BitSet visited,
-											 Map<Integer, Integer> parent, Set<Integer> recStack) {
-		visited.set(node);
-		recStack.add(node);
-		int i = matching[node];
-		if(i == -1){
-			//No outgoing arc
-			return null;
-		}
-		if (recStack.contains(i)) {
-			parent.put(i, node);
-			List<Integer> cycle = new ArrayList<>();
-
-			int x = node;
-			cycle.add(x);
-			while (x != i) {
-				x = parent.get(x);
-				cycle.add(0, x);
-			}
-			return cycle;
-		}
-
-		// If not visited → recurse
-		if (!visited.get(i)) {
-			parent.put(i, node);
-			List<Integer> cycle = dfsFindCycle(matching, i, visited, parent, recStack);
-			if (cycle != null && !cycle.isEmpty()) {
-				return cycle;
-			}
-		}
-
-		recStack.remove(node);
-		return null;  // no cycle found
-	}
-
 	int removed = 0;
 
 	public void basicFiltering(double[][] reducedCostsArray, double lowerBound) throws ContradictionException {
 		double delta = costVar.getUB() - lowerBound;
-		/*System.out.println("[DELTA-CHECK] ub=" + costVar.getUB()
-				+ " lowerBound=" + String.format("%.10f", lowerBound)
-				+ " delta=" + String.format("%.10f", delta)
-				+ " worldindex=" + model.getEnvironment().getWorldIndex());*/
 		if (delta < 0){
 			this.fails();
 		}
 		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
 			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
-				if(arcsEnforcedFromState.quickGet(i) != -1){
-					int a =3;
-				}
-				if (gV.getUB().isArcOrEdge(i+n,j) && i != j && reducedCostsArray[i][j] > delta) {
-					if (i == 23 && j == 20) {
-						/*System.out.println("[CRITICAL-REMOVE] arc(23,20) reducedCost=" + reducedCostsArray[i][j]
-								+ " delta=" + delta + " worldindex=" + model.getEnvironment().getWorldIndex());*/
-					}
+				if (gV.getUB().isArcOrEdge(i+n,j) && i != j && reducedCostsArray[i][j] > delta + 1e-6) {
+					assert arcsEnforcedFromState.quickGet(i) != j;
+					assert arcsEnforcedFromState.quickGet(i) == -1;
 					reducedCostsArray[i][j] = bigValue;
-					if (arcsEnforcedFromState.quickGet(i) == j) {
-						System.out.println("[BUG] basicFiltering tried to remove an enforced arc " + i + "->" + j + " world=" + model.getEnvironment().getWorldIndex());
-					}
 					remove(i+n, j);
 				}
 			}
 		}
-		//mandFiltering();
 	}
-
-	int count = 0;
-
-
-	public Result edmonds2cycles(
-			double[][] matrix,
-			boolean ignoreStars,
-			int[] matching
-	) throws ContradictionException {
-		//TODO pour le moment je pénalise juste un cycle par itération
-		//for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
-		//	for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
-
-		count++;
-
-		int n = matrix.length;
-		double lb = 0;
-		if(!ignoreStars){
-		} else {
-			throw new RuntimeException("Error352");
-		}
-
-		for (int i = remainingRows.nextClearBit(0); i < n; i = remainingRows.nextClearBit(i + 1)){
-			//Met les zéros des arcs obligatoires
-			matching[i] = arcsEnforcedFromState.quickGet(i);
-		}
-
-		BitSet visited = new BitSet(n);
-		List<List<Integer>> cycles = new ArrayList<>();
-
-		// Find cycle
-		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
-			if (!visited.get(i) /*&& cycle == null*/) {
-				List<Integer> cycle = dfsFindCycle(matching, i, visited,
-						new HashMap<>(), new HashSet<>());
-				if (cycle != null && cycle.size() < n && cycle.size() <= tailleMaxCycles /*&& (cycle.size() < nRemaining/k || cycle.size() > nRemaining-nRemaining/k)*/ ) {
-					cycles.add(cycle);
-				}
-			}
-		}
-
-
-		for(List<Integer> cycle : cycles){
-			BitSet cycleBs = createBitsetFromList(cycle);
-			double minimumInCol = bigValue;
-			for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
-				if(!cycleBs.get(i)){
-					for (int j = cycleBs.nextSetBit(0); j >= 0; j = cycleBs.nextSetBit(j + 1)){
-						if(remainingCols.get(j)){
-							minimumInCol = Math.min(minimumInCol, matrix[i][j]);
-						}
-					}
-				}
-			}
-
-			double minimumInRow = bigValue;
-			for (int i = cycleBs.nextSetBit(0); i >= 0; i = cycleBs.nextSetBit(i + 1)){
-				if(remainingRows.get(i)){
-					for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
-						if (!cycleBs.get(j)){
-							minimumInRow = Math.min(minimumInRow, matrix[i][j]);
-						}
-					}
-				}
-			}
-
-			double minimum;
-			boolean penalizeCols;
-			if(minimumInCol > minimumInRow){
-				minimum = minimumInCol;
-				penalizeCols = true;
-			}
-			else {
-				minimum = minimumInRow;
-				penalizeCols = false;
-			}
-
-			if(minimumInRow > bigValue*0.9 || minimumInCol > bigValue*0.9) {
-				//System.out.println("found inconsistency in edmonds ");
-				this.fails();
-			}
-
-			//System.out.println("penalized " + cycle + "amount " + minimum);
-			penalizeCycle(cycleBs, matrix, minimum, penalizeCols);
-			lb += minimum;
-		}
-
-		return new Result(lb, matrix, null);
-	}
-
-
-	public Result fullEdmondsSCC(
-			double[][] matrix,
-			boolean ignoreStars,
-			int[] matching
-	) throws ContradictionException {
-		count++;
-
-		int root = 0;
-
-		int n = matrix.length;
-		double lb = 0;
-		if(!ignoreStars){
-		} else {
-			throw new RuntimeException("Error352");
-		}
-
-
-		for (int i = remainingRows.nextClearBit(0); i < n; i = remainingRows.nextClearBit(i + 1)){
-			matching[i] = arcsEnforcedFromState.quickGet(i);
-		}
-
-		BitSet[] A = new BitSet[n];
-		for (int i =0; i<n; i++){
-			A[i] = new BitSet(n);
-			int j = matching[i];
-			if (j != root){
-				A[i].set(j);
-			}
-		}
-
-		boolean shouldStop = false;
-
-		while (!shouldStop){
-			ArrayList<ArrayList<Integer>> strongComponents;
-
-			strongComponents = SCCFinder.getSCCs(A);
-
-			boolean componentFound = false;
-
-			for(List<Integer> scc : strongComponents){
-				boolean validSCC = true;
-				BitSet sccBs = createBitsetFromList(scc);
-				double minimumInCol = bigValue;
-
-				for (int i = 0; i < n; i++) {
-					if (sccBs.get(i)) continue;
-					if (A[i].intersects(sccBs)) {
-						validSCC = false;
-					}
-				}
-
-				if(validSCC && !sccBs.get(root)){
-					for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
-						if(!sccBs.get(i)){
-							for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
-								if (sccBs.get(j)){
-									if(matrix[i][j] < minimumInCol){
-										minimumInCol = matrix[i][j];
-									}
-								}
-							}
-						}
-					}
-				}
-
-				double minimum = minimumInCol; //Math.max(minimumInRow, minimumInCol);
-				if(!sccBs.get(root) && validSCC){
-					if (minimum > bigValue*0.9){
-						//System.out.println("found inconsistency in edmonds ");
-						this.fails();
-					}
-
-					componentFound = true;
-
-					penalizeSCC(sccBs, matrix, minimum, A);
-					lb += minimum;
-				}
-			}
-			if(!componentFound){
-				shouldStop = true;
-			}
-		}
-		return new Result(lb, matrix, null);
-	}
-
-	private void penalizeCycle(BitSet cycle, double[][] matrix, double k, boolean penalizeCols){
-		if(!penalizeCols){
-			for (int i = cycle.nextSetBit(0); i >= 0; i = cycle.nextSetBit(i + 1)){
-				for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)){
-					if(remainingRows.get(i) && !cycle.get(j))
-						matrix[i][j] -= k;
-				}
-			}
-		}
-		else{
-			for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
-				for (int j = cycle.nextSetBit(0); j >= 0; j = cycle.nextSetBit(j + 1)) {
-					if (remainingCols.get(j) && !cycle.get(i))
-						matrix[i][j] -= k;
-				}
-			}
-		}
-	}
-
-	private void penalizeSCC(BitSet cycle, double[][] matrix, double k, BitSet[] A){
-		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)){
-			for (int j = cycle.nextSetBit(0); j >= 0; j = cycle.nextSetBit(j + 1)) {
-				if (remainingCols.get(j) && !cycle.get(i))
-					matrix[i][j] -= k;
-				if(matrix[i][j] == 0){
-					A[i].set(j);
-				}
-			}
-		}
-	}
-
-	private BitSet createBitsetFromList(List<Integer> list){
-		BitSet bs = new BitSet(n);
-		for (int i = 0; i < list.size(); i++) {
-			bs.set(list.get(i));
-		}
-		return bs;
-	}
-
 
 	////////////////////////////////////////
 	int M;
@@ -403,7 +120,7 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 		graphData = "";
 		n = costMatrix.length / 2;
 		nRemaining = n;
-		originalSmallCosts = new int[n][n];
+		originalSmallCosts = new double[n][n];
 		originalCostMatrix = costMatrix;
 		hung = new HungarianAlgorithm(n);
 		M = costMatrix[n][0];
@@ -417,7 +134,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			}
 		}
 
-
 		reducedCostsState = new IStateDouble[n][n];
 		for (int i = 0; i < n; i++) {
 			for (int j = 0; j < n; j++) {
@@ -425,28 +141,30 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			}
 		}
 
-		arcsEnforcedFromState = model.getEnvironment().makeIntVector(n, -1);
-		lowerBoundState = model.getEnvironment().makeFloat(0);
-
-		costs = new double[n][n];
+		arcsEnforcedFromState = getModel().getEnvironment().makeIntVector(n, -1);
+		lowerBoundState = getModel().getEnvironment().makeFloat(0);
 		reducedCosts = new double[n][n];
-		this.onArcRemoved = this::arcRemovedPropagation;
-		this.onArcEnforced = this::arcEnforcedPropagation;
 	}
 	boolean interleave;
 
 	int tailleMaxCycles;
+
+	ABmode abMode;
 
 	public PropFusionAsymUndirectedGraphVar(UndirectedGraphVar graph, IntVar cost, int[][] costMatrix, ABmode abMode) {
 		this(new Variable[]{graph, cost}, costMatrix);
 		g = graph.getUB();
 		gV = graph;
 		costVar = cost;
-		this.deltaMonitor = gV.monitorDelta(this);
-		if(abMode == ABmode.Pen2Cycle){
+		this.abMode = abMode;
+		if(abMode == ABmode.PenIncreasingCycles){
+			tailleMaxCycles = -1;
+			this.interleave = true;
+		}else if(abMode == ABmode.Pen2Cycles){
 			tailleMaxCycles = 2;
 			this.interleave = true;
-		}else if (abMode == ABmode.PenAllCycles){
+		}
+		else if (abMode == ABmode.PenAllCycles){
 			tailleMaxCycles=n;
 			this.interleave = true;
 		}else if(abMode == ABmode.JustHung){
@@ -466,124 +184,35 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	double baseLowerBound = 0;
 	private void enforceInitial() throws ContradictionException {
 		 for (int i = 0; i < n; i++) {
-        //System.out.println("[FUSION][INIT-ENFORCE] " + (i+n) + " -> " + i);
-        gV.enforceArc(i+n, i, this);
-        baseLowerBound += M;
-        for (int j = 0; j < n; j++) {
-            //System.out.println("[FUSION][INIT-REMOVE] " + i + " -> " + j);
-            gV.removeArc(i,j, this);
-            //System.out.println("[FUSION][INIT-REMOVE] " + (i+n) + " -> " + (j+n));
-            gV.removeArc(i+n,j+n, this);
-        }
-    }
-	}
-
-	private void arcRemovedPropagation(int from, int to) throws ContradictionException {
-		processCounter++;
-		if (g.edgeExists(from, to)) {
-			System.out.println("Phantom, deltaSize " +gV.getDelta().getSize(GraphEventType.REMOVE_ARC.getMask()));
-			//System.out.println("PhantomRemove" + model.getEnvironment().getTimeStamp());
-			//return; // stale removal: edge is back in UB
-		}
-		if(from == 94 && to == 249){
-			System.out.println("herePenalize");
-			int a =3;
-		}
-		if (from >= n && to < n) {
-			from = from % n;
-		}
-		else if (from < n && to >= n) {
-			int temp = to;
-			to = from;
-			from = temp % n;
-		}
-		else{
-			return;
-			//C'est ok, c'est un arc dans les zones infini
-		}
-		if(from == to) return;
-		reducedCosts[from][to] = bigValue;
-	}
-
-	private void arcEnforcedPropagation(int from, int to) throws ContradictionException {
-		if (!gV.getLB().edgeExists(from, to)) {
-			/*System.out.println("PHANTOM " + from + "-" + to
-					+ " inLB(rev)=" + gV.getLB().edgeExists(to, from)
-					+ " inUB=" + g.edgeExists(from, to)
-					+ " rowSide=" + (from >= n) + " world=" + model.getEnvironment().getWorldIndex());*/
-		}
-		if(from == 94 && to == 249){
-			int a =3;
-		}
-		if(g.getNeighOf(from).size() != 2){
-			for (int neigh: g.getNeighOf(from).toArray()) {
-				if(neigh != to && neigh != from+n && neigh != from-n){
-					remove(from, neigh);
-					//arcRemovedPropagation(from, neigh);
-				}
+			//System.out.println("[FUSION][INIT-ENFORCE] " + (i+n) + " -> " + i);
+			gV.enforceArc(i+n, i, this);
+			baseLowerBound += M;
+			for (int j = 0; j < n; j++) {
+				//System.out.println("[FUSION][INIT-REMOVE] " + i + " -> " + j);
+				gV.removeArc(i,j, this);
+				//System.out.println("[FUSION][INIT-REMOVE] " + (i+n) + " -> " + (j+n));
+				gV.removeArc(i+n,j+n, this);
 			}
 		}
-		if (!g.edgeExists(from, to)) {
-			System.out.println(from + "->" + to + " enforced but not in UB"
-					+ " | inLB=" + gV.getLB().edgeExists(from, to)
-					+ " | world=" + model.getEnvironment().getWorldIndex()
-					+ " | removedThisCall=" + removed);
-			//new Throwable().printStackTrace();
-		}
-
-
-		if (from >= n && to < n) {
-			from = from % n;
-		}
-		else if (from < n && to >= n) {
-			int temp = to;
-			to = from;
-			from = temp % n;
-		}
-		else{
-			//TODO pas normal d'arriver ici
-			System.out.println("Error42");
-			throw new RuntimeException();
-		}
-
-		if(from == to) return;
-		if (arcsEnforcedFromState.quickGet(from) == to) return;
-		if (!remainingRows.get(from) || !remainingCols.get(to)) return;
-
-		arcsEnforcedFromState.set(from, to);
-		if(remainingRows.get(from) && remainingCols.get(to)){
-			remainingRows.clear(from);
-			remainingCols.clear(to);
-			nRemaining--;
-			lowerBound += reducedCosts[from][to];
-		}
 	}
 
-	private void setReducedCostsFromState(){
+	private void setReducedCosts(){
 		remainingRows = new BitSet(n);
 		remainingCols = new BitSet(n);
 		remainingRows.flip(0,n);
 		remainingCols.flip(0,n);
 
-		for (int i = 0; i < n; i++) {
-			if(arcsEnforcedFromState.quickGet(i) != -1){
-				remainingRows.clear(i);
-				remainingCols.clear(arcsEnforcedFromState.quickGet(i));
-			}
-		}
 		nRemaining = remainingRows.cardinality();
 		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
 			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)) {
-				reducedCosts[i][j] = reducedCostsState[i][j].get();
+				reducedCosts[i][j] = originalSmallCosts[i][j];
 			}
 		}
-		lowerBound = lowerBoundState.get();
+		lowerBound = M * n;
 	}
 
-	int processCounter = 0;
-
 	private void syncWithGraph() throws ContradictionException {
-		// 1. removals: any potential-less arc still in the active submatrix
+		//Removed edges
 		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
 			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)) {
 				if (i != j && !g.edgeExists(i + n, j)) {
@@ -591,148 +220,92 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 				}
 			}
 		}
-		// 2. enforcements: edges in the LB between row-node i+n and a column j
+
+		//Enforced edges
 		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
+			assert gV.getLB().getNeighOf(i + n).contains(i): "Enforced arcs don't contain negative infinite Jonker Volgenant arc";
+			assert gV.getLB().getNeighOf(i + n).size() <= 2: "More than 2 adjacent arcs enforced";
 			for (int j : gV.getLB().getNeighOf(i + n).toArray()) {
 				if (j < n && j != i && remainingCols.get(j)) {
 					enforceMatch(i, j);
-					break;               // a row has one match
+					break;
 				}
 			}
 		}
 	}
 
-	private void enforceMatch(int i, int j) throws ContradictionException {
-		// degree cleanup, as in your arcEnforcedPropagation, for both endpoints
-		cleanup(i + n, j);
-		cleanup(j, i + n);
-		if (!remainingRows.get(i) || !remainingCols.get(j)) return;
-		arcsEnforcedFromState.set(i, j);
-		remainingRows.clear(i);
-		remainingCols.clear(j);
-		nRemaining--;
-		lowerBound += reducedCosts[i][j];
+	private void enforceInReducedCosts(int from, int to){
+		for (int i = 0; i < n; i++) {
+			reducedCosts[i][to] = bigValue;
+		}
+
+		for (int j = 0; j < n; j++) {
+			reducedCosts[from][j] = bigValue;
+		}
+		reducedCosts[from][to] = 0;
 	}
 
-	private void cleanup(int from, int to) throws ContradictionException {
+	private void enforceMatch(int i, int j) throws ContradictionException {
+		//Ceci ne fait rien, probablement car un autre propagateur a déja fait ce cleanup.
+		removeAlternativesForEnforcedEdges(i + n, j);
+		removeAlternativesForEnforcedEdges(j, i + n);
+		if (!remainingRows.get(i) || !remainingCols.get(j)) return;
+		//remainingRows.clear(i);
+		//remainingCols.clear(j);
+		//nRemaining--;
+		assert reducedCosts[i][j] == originalSmallCosts[i][j];
+		lowerBound += reducedCosts[i][j];
+		enforceInReducedCosts(i, j);
+	}
+
+	private void removeAlternativesForEnforcedEdges(int from, int to) throws ContradictionException {
 		if (g.getNeighOf(from).size() != 2) {
 			for (int nb : g.getNeighOf(from).toArray()) {
-				if (nb != to && nb != from + n && nb != from - n) remove(from, nb);
+				if (nb != to && nb != from + n && nb != from - n){
+					remove(from, nb);
+				}
 			}
 		}
 	}
 
 	public void propagate(int evtmask) throws ContradictionException {
-    if (firstProp) {
-        remainingRows = new BitSet(n);
-        remainingCols = new BitSet(n);
-        remainingRows.flip(0, n);
-        remainingCols.flip(0, n);
-        nRemaining = n;
+		if (firstProp) {
+			remainingRows = new BitSet(n);
+			remainingCols = new BitSet(n);
+			remainingRows.flip(0, n);
+			remainingCols.flip(0, n);
+			nRemaining = n;
 
-        enforceInitial();            // enforces (i+n,i), removes the infinite zones
-        setCosts();                  // uses the UB after enforceInitial
-        for (int i = 0; i < n; i++) reducedCosts[i] = costs[i].clone();
-        lowerBound = M * n;
-        logState();                  // trailed copy of reducedCosts and lowerBound
-        firstProp = false;
-    } else {
-        setReducedCostsFromState();
-    }
+			enforceInitial();            // enforces (i+n,i), removes the infinite zones
+			lowerBound = M * n;
+			//logState();                // trailed copy of reducedCosts and lowerBound
+			firstProp = false;
+		}
+		setReducedCosts();
 
-    updateRemaining();
-    syncWithGraph();
-    syncWithGraph();   // cleanup() in enforceMatch can remove edges, so sync again
+		updateEnforcedArcs();
+		syncWithGraph();  // cleanup() in enforceMatch can remove edges, so sync again
 
-    logState();
-    removed = 0;
-    justHungFW();
-    if (interleave) fusionRelaxationAsym();
-}
+		//logState();
+		removed = 0;
 
+		//Pour le moment pas de réduction de remainingRows.
+		assert remainingRows.cardinality() == n;
+		assert remainingCols.cardinality() == n;
+		justHungFW();
+		if (interleave){
+			edmonds();
+		}
+	}
 
 	int iter = 0;
 
 	int fwRemoves = 0;
-	private void filterFloydWarshallNew(double lowerBound, int[] matching) throws ContradictionException {
-		// build base matrix restricted to remaining rows/cols
-		double[][] W = new double[2*nRemaining][2*nRemaining];
-		for (double[] row : W) Arrays.fill(row, bigValue);
 
-		// map: row i -> position ki in [0, nRemaining)
-		//      col j -> position kj+nRemaining in [nRemaining, 2*nRemaining)
-		int ki = 0;
-		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
-			int kj = 0;
-			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)) {
-				// row i -> column j  (forward arc)
-				W[ki][kj + nRemaining] = getCostFlow(i, j + n, matching);
-				// column j -> row i  (reverse/matching arc)
-				W[kj + nRemaining][ki] = getCostFlow(j + n, i, matching);
-				kj++;
-			}
-			ki++;
-		}
 
-		for (int idx = 0; idx < 2*nRemaining; idx++) {
-			W[idx][idx] = 0;
-		}
-
-		for (int k = 0; k < 2*nRemaining; k++) {
-			for (int i = 0; i < 2*nRemaining; i++) {
-				for (int j = 0; j < 2*nRemaining; j++) {
-					W[i][j] = Math.min(W[i][j], W[i][k] + W[k][j]);
-				}
-			}
-		}
-
-		double[][] bigReducedCosts = new double[n][n];
-		ki = 0;
-		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
-			int kj = 0;
-			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)) {
-				if (i == j) {
-					bigReducedCosts[i][j] = bigValue;
-				} else {
-					// mirrors old: W[j+n][i] + reducedCosts[i][j], with j+n -> kj+nRemaining, i -> ki
-					bigReducedCosts[i][j] = W[kj + nRemaining][ki] + reducedCosts[i][j];
-				}
-				kj++;
-			}
-			ki++;
-		}
-		int before = removed;
-		//System.out.println("bigReduced " + Arrays.deepToString(bigReducedCosts));
-		basicFiltering(bigReducedCosts, lowerBound);
-		fwRemoves += removed - before;
-	}
-
-	private double getCostFlow(int from, int to, int[] matching){
-		if(from < n && to < n || from >= n && to >= n){
-			return bigValue;
-		}
-		if (from >= n){
-			// Should transpose
-			if(matching[to] == from-n){
-				return 0;
-			}
-			return bigValue;
-		}else{
-			if(matching[from] == to-n){
-				return bigValue;
-			}
-			return reducedCosts[from][to-n];
-		}
-	}
-
-	double lbBegin = 0;
 
 	protected void justHungFW() throws ContradictionException{
-		nbSprints = n;
-		lbBegin = lowerBound;
-
-
-		Result result = hungarianSSP(reducedCosts);
+		Result result = hung.execute(reducedCosts, remainingRows, remainingCols);
 		lowerBound += result.lb;
 		reducedCosts = result.array;
 
@@ -748,103 +321,73 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 			bestMatching = result.matching;
 		}
 
-		logState();
-
 		matching = result.matching;
-		if((removed > 0 && executeFW)){
-			filterFloydWarshallNew(lowerBound, matching);
+		if(executeFW){
+			filterAugmentedReducedCosts();
 		}
 
 		removed = 0;
 		iter++;
 	}
 
+	private void filterAugmentedReducedCosts() throws ContradictionException {
+		double[][] augmentedRc = ReducedCostsAugmenter.augmentReducedCostsFW(matching, remainingRows, remainingCols, reducedCosts);
+		basicFiltering(augmentedRc, lowerBound);
+	}
+
 	int[] matching;
 
-	protected void fusionRelaxationAsym() throws ContradictionException {
-		double maxLb = Double.NEGATIVE_INFINITY;
-		Result result;
-		nbSprints = n;
-		int i = 0;
-		lbBegin = lowerBound;
-		removed = 0;
 
-		if(tailleMaxCycles > 2){
-			result = fullEdmondsSCC(reducedCosts, false, matching);
-		} else{
-			result = edmonds2cycles(reducedCosts, false, matching);
+	public PropFusionAsymUndirectedGraphVar.Result increasingEdmonds(
+			double[][] matrix,
+			int[] matching
+	) throws ContradictionException {
+		EdmondsAlgorithm.resetEdmonds();
+		removed = 0;
+		double totalIncrementalLb = 0;
+		for (int i = 1; i < n; i++) {
+			EdmondsAlgorithm.sccToPenalize = new BitSet(n+1);
+			EdmondsAlgorithm.sccToPenalize.set(i);
+			lowerBound += EdmondsAlgorithm.fullEdmondsSCC(matrix, matching, remainingRows, remainingCols, -1).lb;
+			basicFiltering(matrix, lowerBound);
+			if(removed > 0){
+				//System.out.println("at iteration " + i + " removed " + removed);
+			}
+			removed = 0;
+		}
+		return new PropFusionAsymUndirectedGraphVar.Result(totalIncrementalLb, matrix, matching);
+	}
+
+	protected void edmonds() throws ContradictionException {
+		Result result;
+		removed = 0;
+		if(abMode == ABmode.PenIncreasingCycles){
+			result = increasingEdmonds(reducedCosts, matching);
+		}
+		else{
+			result = EdmondsAlgorithm.fullEdmondsSCC(reducedCosts, matching, remainingRows, remainingCols, tailleMaxCycles);
 		}
 		lowerBound += result.lb;
 		reducedCosts = result.array;
 
-		if (lowerBound > maxLb) {
-			maxLb = lowerBound;
-		}
-
-		//System.out.println("lb before floor : " + lowerBound);
 		if (lowerBound - Math.floor(lowerBound) < 0.001) {
 			lowerBound = Math.floor(lowerBound);
 		}
 
 		basicFiltering(reducedCosts, lowerBound);
-		//if(removed > 0)
-		//System.out.println("removed " + removed + " at iter " + iter);
-		/*if((removed > 0)){
-			filterFloydWarshallNew(lowerBound, matching);
-		}*/
 
-		costVar.updateLowerBound((int) Math.ceil(maxLb), this);
+		costVar.updateLowerBound((int) Math.ceil(lowerBound), this);
 
 		removed = 0;
 	}
 
-	private void logState() throws ContradictionException {
-		updateRemaining();
-		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
-			for (int j = remainingCols.nextSetBit(0); j >= 0; j = remainingCols.nextSetBit(j + 1)) {
-				reducedCostsState[i][j].set(reducedCosts[i][j]);
-			}
-		}
-		lowerBoundState.set(lowerBound);
-	}
-
-	private void updateRemaining() throws ContradictionException {
+	private void updateEnforcedArcs() throws ContradictionException {
 		for (int i = remainingRows.nextSetBit(0); i >= 0; i = remainingRows.nextSetBit(i + 1)) {
 			if(g.getNeighOf(i+n).size() == 2){
 				int neigh = g.getNeighOf(i+n).min();
 				if (neigh == i)
 					neigh = g.getNeighOf(i+n).max();
-
-				for (int j = 0; j < n; j++) {
-					if(arcsEnforcedFromState.quickGet(j) == neigh){
-						//TODO optimize this, detect this case earlier?
-						System.out.println("Error12");
-						this.fails();
-					}
-				}
 				gV.enforceArc(i+n, neigh, this);
-				if(reducedCosts[i][neigh] != 0){
-					int a =3;
-				}
-			}
-		}
-	}
-
-
-	//***********************************************************************************
-	// DETAILS
-	//***********************************************************************************
-
-	protected void setCosts() {
-		for (int i = 0; i < n; i++) {
-			for (int j = 0; j < n; j++) {
-				//TODO à tester ci-dessous
-				if(i != j && gV.getUB().isArcOrEdge(i+n,j) /*&& !gV.getLB().arcExists(j,i)*/){
-					costs[i][j] = originalSmallCosts[i][j];
-				}
-				else {
-					costs[i][j] = bigValue;
-				}
 			}
 		}
 	}
@@ -853,9 +396,6 @@ public class PropFusionAsymUndirectedGraphVar extends Propagator<Variable> {
 	// INFERENCE
 	//***********************************************************************************
 	public void remove(int from, int to) throws ContradictionException {
-		if(from==94 && to==249){
-			int a =3;
-		}
 		removed++;
 		gV.removeArc(from, to, this);
 	}

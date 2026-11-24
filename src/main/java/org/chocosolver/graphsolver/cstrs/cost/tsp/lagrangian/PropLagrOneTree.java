@@ -66,6 +66,7 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 	private final double[] penalities;
 	private double totalPenalities;
 	public double firstLb = Double.NEGATIVE_INFINITY;
+	public boolean firstProp = true;
 	public UndirectedGraph mst;
 	private double step;
 	private final AbstractTreeFinder HKfilter, HK;
@@ -104,6 +105,11 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 			return;//the UB does not allow to prune
 		}
 
+		if(firstProp){
+			enforceInitial();
+			firstProp = false;
+		}
+
 		// initialisation
 		rebuild();
 		setCosts();
@@ -114,6 +120,7 @@ public class PropLagrOneTree extends Propagator<Variable> implements GraphLagran
 		} while (lb < obj.getLB());
 
 		if(firstLb == Double.NEGATIVE_INFINITY){
+			enforceInitial();
 			firstLb = obj.getLB();
 		}
 	}

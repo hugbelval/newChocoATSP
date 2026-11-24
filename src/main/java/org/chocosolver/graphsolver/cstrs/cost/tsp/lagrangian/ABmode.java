@@ -1,7 +1,8 @@
 package org.chocosolver.graphsolver.cstrs.cost.tsp.lagrangian;
 
 public enum ABmode {
-    Pen2Cycle,
+    PenIncreasingCycles,
     PenAllCycles,
     JustHung,
+    Pen2Cycles,
 }
